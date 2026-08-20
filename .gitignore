@@ -1,0 +1,12 @@
+# Nada de dados pessoais ou backups no repositório
+*.zip
+financas-backup-*.json
+backup-*.json
+*.db
+
+# Arquivo específico do preview do Claude (não é necessário para hospedar)
+artifact_body.html
+
+# Sistema
+.DS_Store
+Thumbs.db
