@@ -1,4 +1,4 @@
-const CACHE = 'financas-v17';
+const CACHE = 'financas-v18';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png',
   './vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs'];
 

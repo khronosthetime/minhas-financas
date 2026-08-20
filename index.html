@@ -600,6 +600,7 @@ function renderContas(){
 
 function renderAjustes(){
   const nTx=db.transactions.length, nBills=db.bills.length;
+  const nLearned=Object.keys((db.settings&&db.settings.catMemory)||{}).length;
   const np=('Notification' in window)?Notification.permission:'unsupported';
   const notifTxt = np==='granted' ? 'Ativado. Você recebe um aviso ao cruzar cada faixa.' : np==='denied' ? 'Bloqueado nos ajustes do iPhone. O aviso ainda aparece dentro do app.' : np==='unsupported' ? 'Este navegador não suporta. O aviso aparece dentro do app.' : 'Toque para permitir. O aviso também aparece dentro do app.';
   const pushOn=!!(db.settings&&db.settings.pushOn);
@@ -618,7 +619,10 @@ function renderAjustes(){
       <button class="item" id="importBtn"><div class="t">Importar backup<small>Restaura os dados de um arquivo salvo</small></div><span class="chev">↑</span></button>
     </div>
     <div class="sec-title">Categorias</div>
-    <div class="list"><button class="item" id="catBtn"><div class="t">Gerenciar categorias<small>${db.categories.length} categorias</small></div><span class="chev">›</span></button></div>
+    <div class="list">
+      <button class="item" id="catBtn"><div class="t">Gerenciar categorias<small>${db.categories.length} categorias</small></div><span class="chev">›</span></button>
+      <button class="item" id="learnBtn"><div class="t">Categorias aprendidas<small>${nLearned? nLearned+' regra'+(nLearned===1?'':'s')+' de estabelecimento → categoria. Toque para ver ou esquecer.' : 'Quando você corrige a categoria de um lançamento, eu memorizo o estabelecimento e acerto sozinho depois.'}</small></div><span class="chev">›</span></button>
+    </div>
     <div class="sec-title">Alertas de meta</div>
     <div class="list">
       <button class="item" id="notifBtn"><div class="t">Avisar em 50%, 75% e 100%<small>${notifTxt}</small></div><span class="chev">›</span></button>
@@ -634,6 +638,31 @@ function renderAjustes(){
     <input type="file" id="faturaFile" accept="application/pdf,.pdf" class="hidden">
     <input type="file" id="extratoFile" accept=".ofx,.csv,text/csv,application/x-ofx,application/vnd.intu.qfx" class="hidden">`;
   $('#scr-ajustes').innerHTML=html;
+}
+
+function learnSheet(){
+  const mem=catMem();
+  const keys=Object.keys(mem).sort();
+  const rows = keys.length ? keys.map(k=>{
+    const c=catById(mem[k])||{name:'—',color:'#6A7686'};
+    return `<div class="imp-row on">
+      <div class="mid">
+        <div class="nm">${esc(k)}</div>
+        <div class="sub"><span class="dt"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c.color};margin-right:6px;vertical-align:middle"></span>${esc(c.name)}</span></div>
+      </div>
+      <button class="cb" data-forget="${esc(k)}" aria-label="Esquecer">✕</button>
+    </div>`;
+  }).join('') : `<div class="empty" style="padding:24px 20px"><b>Nada aprendido ainda</b>Quando você trocar a categoria de um lançamento importado ou editado, eu memorizo o estabelecimento e passo a acertar sozinho.</div>`;
+  openSheet(`
+    <div class="sh-head"><button id="shCancel">Fechar</button><h2>Categorias aprendidas</h2><span></span></div>
+    <div class="body">
+      ${keys.length?`<p style="color:var(--muted);font-size:12px;margin:0 0 10px">Cada regra é um estabelecimento que você corrigiu. Toque no ✕ para esquecer.</p>`:''}
+      ${rows}
+      ${keys.length?`<button class="btn ghost" id="forgetAll" style="margin-top:16px">Esquecer tudo</button>`:''}
+    </div>`);
+  sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  sheetContent.querySelectorAll('[data-forget]').forEach(b=>b.addEventListener('click',()=>{ delete mem[b.dataset.forget]; save(); learnSheet(); }));
+  const fa=sheetContent.querySelector('#forgetAll'); if(fa) fa.addEventListener('click',()=>{ if(confirm('Esquecer todas as categorias aprendidas?')){ db.settings.catMemory={}; save(); learnSheet(); } });
 }
 
 function renderAll(){
@@ -686,7 +715,7 @@ function parseChatEntry(text){
   desc=desc.replace(/\s+/g,' ').trim();
   let catId;
   if(isIncome){ catId=(t.includes('salario')&&catById('c_salary'))?'c_salary':(db.categories.find(c=>c.type==='income')||{}).id; }
-  else { catId=chatHint(t)||appCatFor(desc||t); }
+  else { catId=sherlockCat(desc)||chatHint(t)||appCatFor(desc||t); }
   const name=nomeChat(desc)||(catById(catId)||{name:'Lançamento'}).name;
   return {type:isIncome?'income':'expense', cents, catId, date, name};
 }
@@ -993,6 +1022,7 @@ function txSheet(existing){
   const ed=existing||null;
   let type=ed?ed.type:'expense';
   let catId=ed?ed.categoryId:null;
+  const prevCat=ed?ed.categoryId:null;
   const html=`
     <div class="sh-head"><button id="shCancel">Cancelar</button><h2>${ed?'Editar':'Novo lançamento'}</h2><button id="shSave">Salvar</button></div>
     <div class="body">
@@ -1037,6 +1067,7 @@ function txSheet(existing){
     const note=sheetContent.querySelector('#noteIn').value.trim();
     if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note}); }
     else{ db.transactions.push({id:uid(),type,amount,categoryId:catId,date,note,_o:Date.now()}); }
+    if(type==='expense' && note && (!ed || catId!==prevCat)) sherlockLearn(note, catId);
     save(); closeSheet();
     // jump to month of the tx
     const [Y,M]=date.split('-').map(Number); curY=Y; curM=M-1;
@@ -1205,7 +1236,25 @@ const SKIP_KEYWORDS=["total desta fatura","total da fatura","total fatura","subt
 function NORM(s){return (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
 function deveIgnorar(desc){const d=NORM(desc); return SKIP_KEYWORDS.some(k=>d.includes(NORM(k)));}
 function catFatura(desc){const d=NORM(desc); for(const cat in MAPA_CATEGORIAS){for(const kw of MAPA_CATEGORIAS[cat]){if(d.includes(NORM(kw))) return cat;}} return 'A Classificar';}
-function appCatFor(desc){const id=MAP_TO_APP[catFatura(desc)]||'c_other'; return catById(id)?id:(db.categories.find(c=>c.type==='expense')||{}).id;}
+/* ===== SHERLOCK: aprende estabelecimento -> categoria das suas correções ===== */
+// Extrai uma assinatura estável do estabelecimento: sem parcela, sem números, sem símbolos.
+function sherlockKey(desc){
+  let d=NORM(desc)
+    .replace(/parcela\s+\d+\/\d+/g,' ')
+    .replace(/\b\d{1,2}\/\d{2,3}\b/g,' ')
+    .replace(/[*#•·]/g,' ')
+    .replace(/\d+/g,' ')
+    .replace(/[^a-z\s]/g,' ')
+    .replace(/\s+/g,' ').trim();
+  const STOP=new Set(['do','da','de','dos','das','no','na','em','os','as','ao','com','e']);
+  const toks=d.split(' ').filter(w=>w.length>1 && !STOP.has(w));
+  return toks.slice(0,3).join(' ');
+}
+function catMem(){ db.settings=db.settings||{}; db.settings.catMemory=db.settings.catMemory||{}; return db.settings.catMemory; }
+function isExpenseCat(id){ const c=catById(id); return !!(c&&c.type==='expense'); }
+function sherlockCat(desc){ const k=sherlockKey(desc); if(!k) return null; const id=catMem()[k]; return isExpenseCat(id)?id:null; }
+function sherlockLearn(desc,catId){ const k=sherlockKey(desc); if(!k||!isExpenseCat(catId)) return; catMem()[k]=catId; }
+function appCatFor(desc){const s=sherlockCat(desc); if(s) return s; const id=MAP_TO_APP[catFatura(desc)]||'c_other'; return catById(id)?id:(db.categories.find(c=>c.type==='expense')||{}).id;}
 function parseValorCents(s){
   if(!s) return null;
   s=s.replace(/[R$\s]/g,'').trim();
@@ -1322,7 +1371,7 @@ async function importFatura(file){
     const banco=detectBank(lines.join('\n'));
     let raw = banco==='nubank'?parseNubank(lines) : banco==='xp'?parseXP(lines) : parseGenerico(lines);
     if(!raw.length && banco!=='generico') raw=parseGenerico(lines);
-    const items=raw.map(t=>({date:t.date, name:nomeLimpo(t.desc), rawDesc:t.desc, cents:t.cents, cat:appCatFor(t.desc), parc:parcelaTag(t.desc), on:true}));
+    const items=raw.map(t=>{const c=appCatFor(t.desc); return {date:t.date, name:nomeLimpo(t.desc), rawDesc:t.desc, cents:t.cents, cat:c, auto:c, parc:parcelaTag(t.desc), on:true};});
     reviewFatura(banco, items);
   }catch(e){
     openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Não deu certo</h2><span></span></div><div class="body"><p style="color:var(--muted);font-size:14px">Não consegui ler esse PDF. Pode ser uma fatura protegida por senha ou digitalizada como imagem. Tente o PDF original do banco (XP ou Nubank).</p><p style="color:var(--muted);font-size:12px">Detalhe técnico: ${esc(String(e.message||e))}</p></div>`);
@@ -1378,6 +1427,7 @@ function reviewFatura(banco, items){
         db.transactions.push({id:uid(),type:'expense',amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_fatura:banco});
         add++; lastDate=i.date;
       });
+      chosen.forEach(i=>{ if(i.cat!==i.auto) sherlockLearn(i.rawDesc,i.cat); });
       save(); closeSheet();
       if(lastDate){ const [Y,M]=lastDate.split('-').map(Number); curY=Y; curM=M-1; }
       renderAll();
@@ -1449,8 +1499,7 @@ async function importExtrato(file){
     const isOFX=/<OFX>|OFXHEADER|<STMTTRN>/i.test(text);
     let raw=isOFX?parseOFX(text):parseCSV(text);
     raw=raw.filter(t=>t.cents>0);
-    const items=raw.map(t=>({date:t.date, name:cleanMemo(t.desc), rawDesc:t.desc, cents:t.cents, type:t.type,
-      cat: t.type==='income'?incomeDefaultCat():appCatFor(t.desc), on:true}));
+    const items=raw.map(t=>{const c=t.type==='income'?incomeDefaultCat():appCatFor(t.desc); return {date:t.date, name:cleanMemo(t.desc), rawDesc:t.desc, cents:t.cents, type:t.type, cat:c, auto:c, on:true};});
     reviewExtrato(file.name.replace(/\.(ofx|csv)$/i,''), items);
   }catch(e){
     openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Não deu certo</h2><span></span></div><div class="body"><p style="color:var(--muted);font-size:14px">Não consegui ler esse arquivo. Exporte o extrato do Nubank ou da XP em OFX ou CSV e tente de novo.</p><p style="color:var(--muted);font-size:12px">Detalhe: ${esc(String(e.message||e))}</p></div>`);
@@ -1507,6 +1556,7 @@ function reviewExtrato(source, items){
         db.transactions.push({id:uid(),type:i.type,amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_extrato:1});
         add++; lastDate=i.date; if(i.type==='expense') cats.add(i.cat);
       });
+      chosen.forEach(i=>{ if(i.type==='expense' && i.cat!==i.auto) sherlockLearn(i.rawDesc,i.cat); });
       save(); closeSheet();
       if(lastDate){ const [Y,M]=lastDate.split('-').map(Number); curY=Y; curM=M-1; }
       renderAll();
@@ -1588,6 +1638,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#extratoBtn')){ $('#extratoFile').click(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
+  if(e.target.closest('#learnBtn')){ learnSheet(); return; }
   if(e.target.closest('#lockBtn')){ lockSheet(); return; }
   if(e.target.closest('#notifBtn')){ if('Notification' in window){ Notification.requestPermission().then(p=>{ if(p==='granted') toast('Alertas ativados no celular.'); renderAll(); }); } else { toast('Este navegador não suporta notificações.'); } return; }
   if(e.target.closest('#pushBtn')){ enablePush(); return; }
