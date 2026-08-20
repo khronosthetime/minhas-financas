@@ -146,11 +146,12 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 #app:has(.screen[data-name="ajustes"].active) .fab{display:none;}
 #app:has(.screen[data-name="orcamento"].active) .fab{display:none;}
 #app:has(.screen[data-name="chat"].active) .fab{display:none;}
+#app:has(.screen[data-name="patrimonio"].active) .fab{display:none;}
 
 /* Tab bar */
 .tabbar{position:fixed; bottom:0; left:0; right:0; z-index:25; background:color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter:saturate(160%) blur(16px); -webkit-backdrop-filter:saturate(160%) blur(16px); border-top:.8px solid var(--border); display:flex; padding:8px 8px calc(8px + var(--safe-bot)); max-width:520px; margin:0 auto;}
-.tab{flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; padding:4px 0; color:var(--muted); font-size:10.5px; font-weight:600; letter-spacing:.02em;}
-.tab svg{width:23px; height:23px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}
+.tab{flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:3px; padding:4px 1px; color:var(--muted); font-size:9.5px; font-weight:600; letter-spacing:0; white-space:nowrap;}
+.tab svg{width:21px; height:21px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}
 .tab.active{color:var(--brand);}
 
 /* Sheet / modal */
@@ -257,6 +258,7 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 
   <section class="screen active" data-name="inicio" id="scr-inicio"></section>
   <section class="screen" data-name="orcamento" id="scr-orcamento"></section>
+  <section class="screen" data-name="patrimonio" id="scr-patrimonio"></section>
   <section class="screen" data-name="contas" id="scr-contas"></section>
   <section class="screen" data-name="chat" id="scr-chat"></section>
   <section class="screen" data-name="ajustes" id="scr-ajustes"></section>
@@ -273,6 +275,8 @@ input,select,textarea{font-family:inherit; font-size:16px;}
       <svg viewBox="0 0 24 24"><path d="M3 10.5 12 4l9 6.5"/><path d="M5 9.5V20h14V9.5"/></svg>Início</button>
     <button class="tab" data-tab="orcamento">
       <svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M20 20H2"/></svg>Orçamento</button>
+    <button class="tab" data-tab="patrimonio">
+      <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>Patrimônio</button>
     <button class="tab" data-tab="contas">
       <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Fixos</button>
     <button class="tab" data-tab="chat">
@@ -310,6 +314,7 @@ function defaults(){
       {id:'c_edu',name:'Educação',color:'#2E9E8F',type:'expense'},
       {id:'c_sub',name:'Assinaturas',color:'#7A8794',type:'expense'},
       {id:'c_other',name:'Outros',color:'#6A7686',type:'expense'},
+      {id:'c_aporte',name:'Investimento',color:'#28CC95',type:'expense'},
       {id:'c_salary',name:'Salário',color:'#1E8E5A',type:'income'},
       {id:'c_invest',name:'Investimentos',color:'#3B7BB0',type:'income'},
       {id:'c_extra',name:'Extra',color:'#2E9E8F',type:'income'}
@@ -319,7 +324,8 @@ function defaults(){
     budgets:{},
     alerted:{},
     chat:[],
-    settings:{}
+    settings:{},
+    patrimonio:[]
   };
 }
 let db;
@@ -356,7 +362,7 @@ function renderInicio(){
   const list=txInMonth().slice().sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:(b._o||0)-(a._o||0));
   // category breakdown (expenses)
   const byCat={};
-  txInMonth().forEach(x=>{ if(x.type==='expense'){ byCat[x.categoryId]=(byCat[x.categoryId]||0)+x.amount; }});
+  txInMonth().forEach(x=>{ if(x.type==='expense' && x.categoryId!=='c_aporte'){ byCat[x.categoryId]=(byCat[x.categoryId]||0)+x.amount; }});
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const maxCat=cats.length?cats[0][1]:1;
 
@@ -550,6 +556,7 @@ function renderAjustes(){
 function renderAll(){
   renderMonthLabel();
   if(activeTab==='inicio') renderInicio();
+  else if(activeTab==='patrimonio') renderPatrimonio();
   else if(activeTab==='orcamento') renderOrcamento();
   else if(activeTab==='contas') renderContas();
   else if(activeTab==='chat') renderChat();
@@ -643,6 +650,87 @@ function renderChat(){
   }
   $('#scr-chat').innerHTML=`<div class="chat-log" id="chatLog">${inner}</div>`;
   scrollChat();
+}
+
+/* ================= PATRIMÔNIO ================= */
+const PATR_CLASSES=[
+  {id:'investimentos', nome:'Investimentos', cor:'#28CC95', passivo:false},
+  {id:'previdencia',   nome:'Previdência',   cor:'#3E7CB1', passivo:false},
+  {id:'reserva',       nome:'Reserva',       cor:'#4A90A4', passivo:false},
+  {id:'imovel',        nome:'Imóvel',        cor:'#D1A02E', passivo:false},
+  {id:'cripto',        nome:'Cripto',        cor:'#E8804A', passivo:false},
+  {id:'divida',        nome:'Dívida',        cor:'#FF5C6C', passivo:true},
+];
+const patrClass=id=>PATR_CLASSES.find(c=>c.id===id)||PATR_CLASSES[0];
+
+function renderPatrimonio(){
+  db.patrimonio=db.patrimonio||[];
+  const items=db.patrimonio;
+  let ativos=0, passivos=0, aportes=0;
+  items.forEach(i=>{ if(patrClass(i.classe).passivo) passivos+=i.valor; else ativos+=i.valor; aportes+=(i.aporte||0); });
+  const liquido=ativos-passivos;
+  const byClass={};
+  items.forEach(i=>{ if(!patrClass(i.classe).passivo) byClass[i.classe]=(byClass[i.classe]||0)+i.valor; });
+  const classes=Object.entries(byClass).sort((a,b)=>b[1]-a[1]);
+  const maxC=classes.length?classes[0][1]:1;
+
+  let html=`
+    <div class="hero">
+      <div class="lbl">Patrimônio líquido</div>
+      <div class="val tnum">${fmt(liquido)}</div>
+      <div class="sub">${aportes>0? fmt(aportes)+' em aportes por mês' : (items.length? items.length+' posiç'+(items.length===1?'ão':'ões') : 'Comece adicionando seus investimentos')}</div>
+    </div>`;
+
+  if(classes.length){
+    html+=`<div class="sec-title">Composição</div><div class="cat-bars">`;
+    classes.forEach(([cid,val])=>{ const c=patrClass(cid); const pct=ativos>0?Math.round(val/ativos*100):0;
+      html+=`<div class="cbar"><div class="row"><span class="nm"><span class="dot" style="background:${c.cor}"></span>${esc(c.nome)} <span style="color:var(--muted);font-weight:600">${pct}%</span></span><span class="tnum">${fmt(val)}</span></div><div class="track"><i style="width:${Math.max(4,Math.round(val/maxC*100))}%;background:${c.cor}"></i></div></div>`;
+    });
+    html+=`</div>`;
+  }
+
+  html+=`<div class="sec-title">Posições <button id="addPatr">Adicionar</button></div>`;
+  if(!items.length){
+    html+=`<div class="empty"><b>Sem patrimônio cadastrado</b>Adicione investimentos, previdência, reserva ou imóveis para acompanhar seu patrimônio crescer.</div>`;
+  }else{
+    const sorted=items.slice().sort((a,b)=>{ const pa=patrClass(a.classe).passivo?1:0, pb=patrClass(b.classe).passivo?1:0; if(pa!==pb) return pa-pb; return b.valor-a.valor; });
+    sorted.forEach(i=>{ const c=patrClass(i.classe);
+      html+=`<button class="tx" data-patr="${i.id}">
+        <span class="ic" style="background:${c.cor}">${initials(c.nome)}</span>
+        <span class="mid"><div class="nm">${esc(i.nome)}</div><div class="mt">${esc(c.nome)}${i.aporte? ' · '+fmt(i.aporte)+'/mês':''}</div></span>
+        <span class="amt tnum" style="${c.passivo?'color:var(--neg)':''}">${c.passivo?'− ':''}${fmt(i.valor)}</span>
+      </button>`;
+    });
+  }
+  $('#scr-patrimonio').innerHTML=html;
+}
+
+function patrimonioSheet(existing){
+  const ed=existing||null;
+  let classe=ed?ed.classe:'investimentos';
+  openSheet(`
+    <div class="sh-head"><button id="shCancel">Cancelar</button><h2>${ed?'Editar posição':'Nova posição'}</h2><button id="shSave">Salvar</button></div>
+    <div class="body">
+      <div class="field"><label>Nome</label><input type="text" id="pName" placeholder="Ex: Tesouro Selic, Previdência XP, Apê" value="${ed?esc(ed.nome):''}" maxlength="40"></div>
+      <div class="field"><label>Classe</label><div class="chips" id="pClasses">${PATR_CLASSES.map(c=>`<button class="chip ${c.id===classe?'on':''}" data-pc="${c.id}"><span class="dot" style="background:${c.cor}"></span>${esc(c.nome)}</button>`).join('')}</div></div>
+      <div class="field"><label>Valor atual</label><input type="text" id="pVal" placeholder="0,00" inputmode="numeric"></div>
+      <div class="field"><label>Aporte mensal (opcional)</label><input type="text" id="pAporte" placeholder="0,00" inputmode="numeric"></div>
+      ${ed?'<button class="btn ghost" id="delBtn">Excluir posição</button>':''}
+    </div>`);
+  const getVal=bindMoney(sheetContent.querySelector('#pVal'), ed?ed.valor:0);
+  const getAp=bindMoney(sheetContent.querySelector('#pAporte'), ed?ed.aporte:0);
+  sheetContent.querySelector('#pClasses').addEventListener('click',e=>{const b=e.target.closest('[data-pc]');if(!b)return;classe=b.dataset.pc;sheetContent.querySelectorAll('#pClasses .chip').forEach(x=>x.classList.toggle('on',x.dataset.pc===classe));});
+  sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{ if(confirm('Excluir esta posição?')){ db.patrimonio=db.patrimonio.filter(p=>p.id!==ed.id); save(); closeSheet(); renderAll(); } });
+  sheetContent.querySelector('#shSave').addEventListener('click',()=>{
+    const nome=sheetContent.querySelector('#pName').value.trim();
+    const valor=getVal(); const aporte=getAp();
+    if(!nome){ alert('Dê um nome.'); return; }
+    if(!valor){ alert('Informe o valor atual.'); return; }
+    if(ed){ Object.assign(ed,{nome,classe,valor,aporte}); }
+    else{ db.patrimonio.push({id:uid(),nome,classe,valor,aporte}); }
+    save(); closeSheet(); renderAll();
+  });
 }
 
 /* ---------- ALERTAS DE META ---------- */
@@ -1326,6 +1414,8 @@ $('#app').addEventListener('click',e=>{
   const tx=e.target.closest('[data-tx]'); if(tx){ const t=db.transactions.find(x=>x.id===tx.dataset.tx); if(t) txSheet(t); return; }
   const pb=e.target.closest('[data-paybill]'); if(pb){ toggleBillPaid(pb.dataset.paybill); return; }
   const eb=e.target.closest('[data-editbill]'); if(eb){ const b=db.bills.find(x=>x.id===eb.dataset.editbill); if(b) billSheet(b); return; }
+  const pat=e.target.closest('[data-patr]'); if(pat){ const p=db.patrimonio.find(x=>x.id===pat.dataset.patr); if(p) patrimonioSheet(p); return; }
+  if(e.target.closest('#addPatr')){ patrimonioSheet(null); return; }
   if(e.target.closest('#addIn')){ billSheet(null,'in'); return; }
   if(e.target.closest('#addOut')){ billSheet(null,'out'); return; }
   if(e.target.closest('#editBud')){ budgetSheet(); return; }
