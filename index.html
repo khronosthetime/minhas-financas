@@ -85,6 +85,12 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .cat-bars.filtering .cbar.on{opacity:1;}
 .cbar.on .nm{color:var(--brand);}
 .cbar.on .track{box-shadow:0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent);}
+.donut-wrap{display:flex; justify-content:center; margin:6px 0 22px;}
+.donut-box{position:relative; width:132px; height:132px;}
+.donut-box svg circle{transition:stroke-dasharray .4s ease;}
+.donut-center{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;}
+.donut-lbl{font-size:10px; color:var(--muted); font-weight:600; letter-spacing:.09em; text-transform:uppercase;}
+.donut-val{font-size:16px; font-weight:700; margin-top:2px;}
 .cbar .row{display:flex; justify-content:space-between; font-size:13.5px; font-weight:600; margin-bottom:6px;}
 .cbar .row .nm{display:flex; align-items:center; gap:8px;}
 .dot{width:10px; height:10px; border-radius:50%; flex:none;}
@@ -366,6 +372,7 @@ const now=new Date();
 let curY=now.getFullYear(), curM=now.getMonth(); // 0-11
 let activeTab='inicio';
 let homeFilter=null; // categoria filtrada na tela Início (ou null)
+let patrFilter=null; // classe de ativo filtrada no Patrimônio (ou null)
 
 const $=s=>document.querySelector(s);
 const catById=id=>db.categories.find(c=>c.id===id);
@@ -694,52 +701,81 @@ const PATR_CLASSES=[
   {id:'divida',        nome:'Dívida',        cor:'#FF5C6C', passivo:true},
 ];
 const patrClass=id=>PATR_CLASSES.find(c=>c.id===id)||PATR_CLASSES[0];
+function donut(classes, total, size){
+  const r=size/2-9, C=2*Math.PI*r, cx=size/2, cy=size/2; let off=0, segs='';
+  classes.forEach(([cid,val])=>{ const c=patrClass(cid); const len=(total>0?val/total:0)*C;
+    segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${c.cor}" stroke-width="10" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    off+=len; });
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="10"/>${segs}</svg>`;
+}
 
+function patrRow(i){
+  const c=patrClass(i.classe); const neg=c.passivo;
+  return `<button class="tx" data-patr="${i.id}">
+    <span class="ic" style="background:${c.cor}">${initials(i.nome)}</span>
+    <span class="mid"><div class="nm">${esc(i.nome)}</div><div class="mt">${esc(c.nome)}${i.aporte? ' · '+fmt(i.aporte)+'/mês':''}</div></span>
+    <span class="amt tnum" style="${neg?'color:var(--neg)':''}">${neg?'− ':''}${fmt(i.valor)}</span>
+  </button>`;
+}
 function renderPatrimonio(){
   db.patrimonio=db.patrimonio||[];
   const items=db.patrimonio;
-  let ativos=0, passivos=0, aportes=0;
-  items.forEach(i=>{ if(patrClass(i.classe).passivo) passivos+=i.valor; else ativos+=i.valor; aportes+=(i.aporte||0); });
-  const liquido=ativos-passivos;
+  const ativosItems=items.filter(i=>!patrClass(i.classe).passivo);
+  const dividaItems=items.filter(i=>patrClass(i.classe).passivo);
+  const ativos=ativosItems.reduce((s,i)=>s+i.valor,0);
+  const dividas=dividaItems.reduce((s,i)=>s+i.valor,0);
+  const liquido=ativos-dividas;
+
   const byClass={};
-  items.forEach(i=>{ if(!patrClass(i.classe).passivo) byClass[i.classe]=(byClass[i.classe]||0)+i.valor; });
+  ativosItems.forEach(i=>{ byClass[i.classe]=(byClass[i.classe]||0)+i.valor; });
   const classes=Object.entries(byClass).sort((a,b)=>b[1]-a[1]);
   const maxC=classes.length?classes[0][1]:1;
+  if(patrFilter && !byClass[patrFilter]) patrFilter=null;
 
   let html=`
     <div class="hero">
       <div class="lbl">Patrimônio líquido</div>
       <div class="val tnum">${fmt(liquido)}</div>
-      <div class="sub">${aportes>0? fmt(aportes)+' em aportes por mês' : (items.length? items.length+' posiç'+(items.length===1?'ão':'ões') : 'Comece adicionando seus investimentos')}</div>
+      <div class="sub">Ativos ${fmt(ativos)} · Dívidas ${fmt(dividas)}</div>
     </div>`;
 
   if(classes.length){
-    html+=`<div class="sec-title">Composição</div><div class="cat-bars">`;
+    const filtering=!!patrFilter;
+    html+=`<div class="sec-title">Composição${filtering?'<span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:600"> · toque pra filtrar</span>':''}</div>`;
+    html+=`<div class="donut-wrap"><div class="donut-box">${donut(classes,ativos,132)}<div class="donut-center"><div class="donut-lbl">Ativos</div><div class="donut-val tnum">${fmtShort(ativos)}</div></div></div></div>`;
+    html+=`<div class="cat-bars${filtering?' filtering':''}">`;
     classes.forEach(([cid,val])=>{ const c=patrClass(cid); const pct=ativos>0?Math.round(val/ativos*100):0;
-      html+=`<div class="cbar"><div class="row"><span class="nm"><span class="dot" style="background:${c.cor}"></span>${esc(c.nome)} <span style="color:var(--muted);font-weight:600">${pct}%</span></span><span class="tnum">${fmt(val)}</span></div><div class="track"><i style="width:${Math.max(4,Math.round(val/maxC*100))}%;background:${c.cor}"></i></div></div>`;
+      html+=`<div class="cbar${cid===patrFilter?' on':''}" data-patrbar="${cid}" role="button" tabindex="0"><div class="row"><span class="nm"><span class="dot" style="background:${c.cor}"></span>${esc(c.nome)} <span style="color:var(--muted);font-weight:600">${pct}%</span></span><span class="tnum">${fmt(val)}</span></div><div class="track"><i style="width:${Math.max(4,Math.round(val/maxC*100))}%;background:${c.cor}"></i></div></div>`;
     });
     html+=`</div>`;
   }
 
-  html+=`<div class="sec-title">Posições <button id="addPatr">Adicionar</button></div>`;
-  if(!items.length){
-    html+=`<div class="empty"><b>Sem patrimônio cadastrado</b>Adicione investimentos, previdência, reserva ou imóveis para acompanhar seu patrimônio crescer.</div>`;
-  }else{
-    const sorted=items.slice().sort((a,b)=>{ const pa=patrClass(a.classe).passivo?1:0, pb=patrClass(b.classe).passivo?1:0; if(pa!==pb) return pa-pb; return b.valor-a.valor; });
-    sorted.forEach(i=>{ const c=patrClass(i.classe);
-      html+=`<button class="tx" data-patr="${i.id}">
-        <span class="ic" style="background:${c.cor}">${initials(c.nome)}</span>
-        <span class="mid"><div class="nm">${esc(i.nome)}</div><div class="mt">${esc(c.nome)}${i.aporte? ' · '+fmt(i.aporte)+'/mês':''}</div></span>
-        <span class="amt tnum" style="${c.passivo?'color:var(--neg)':''}">${c.passivo?'− ':''}${fmt(i.valor)}</span>
-      </button>`;
-    });
+  // ATIVOS
+  html+=`<div class="sec-title">Ativos <button id="addAtivo">Adicionar</button></div>`;
+  if(patrFilter){ const fc=patrClass(patrFilter);
+    html+=`<div style="font-size:12.5px;color:var(--muted);margin:-6px 2px 12px">Só ${esc(fc.nome)} · <button id="clearPatr" style="color:var(--brand);font-weight:600">ver todos</button></div>`;
   }
+  const shownAtivos = patrFilter ? ativosItems.filter(i=>i.classe===patrFilter) : ativosItems;
+  if(!shownAtivos.length){
+    html+=`<div class="empty" style="padding:22px 20px"><b>${patrFilter?'Nada nessa classe':'Sem ativos'}</b>${patrFilter?'':'Adicione investimentos, previdência, reserva ou imóveis.'}</div>`;
+  }else{
+    shownAtivos.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); });
+  }
+
+  // DÍVIDAS
+  html+=`<div class="sec-title">Dívidas <button id="addDivida">Adicionar</button></div>`;
+  if(!dividaItems.length){
+    html+=`<div class="empty" style="padding:22px 20px"><b>Sem dívidas</b>Nada devendo por aqui.</div>`;
+  }else{
+    dividaItems.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); });
+  }
+
   $('#scr-patrimonio').innerHTML=html;
 }
 
-function patrimonioSheet(existing){
+function patrimonioSheet(existing, defClasse){
   const ed=existing||null;
-  let classe=ed?ed.classe:'investimentos';
+  let classe=ed?ed.classe:(defClasse||'investimentos');
   openSheet(`
     <div class="sh-head"><button id="shCancel">Cancelar</button><h2>${ed?'Editar posição':'Nova posição'}</h2><button id="shSave">Salvar</button></div>
     <div class="body">
@@ -1479,7 +1515,10 @@ $('#app').addEventListener('click',e=>{
   const pb=e.target.closest('[data-paybill]'); if(pb){ toggleBillPaid(pb.dataset.paybill); return; }
   const eb=e.target.closest('[data-editbill]'); if(eb){ const b=db.bills.find(x=>x.id===eb.dataset.editbill); if(b) billSheet(b); return; }
   const pat=e.target.closest('[data-patr]'); if(pat){ const p=db.patrimonio.find(x=>x.id===pat.dataset.patr); if(p) patrimonioSheet(p); return; }
-  if(e.target.closest('#addPatr')){ patrimonioSheet(null); return; }
+  const pbar=e.target.closest('[data-patrbar]'); if(pbar){ const cid=pbar.dataset.patrbar; patrFilter = patrFilter===cid?null:cid; renderPatrimonio(); return; }
+  if(e.target.closest('#clearPatr')){ patrFilter=null; renderPatrimonio(); return; }
+  if(e.target.closest('#addAtivo')){ patrimonioSheet(null,'investimentos'); return; }
+  if(e.target.closest('#addDivida')){ patrimonioSheet(null,'divida'); return; }
   if(e.target.closest('#addIn')){ billSheet(null,'in'); return; }
   if(e.target.closest('#addOut')){ billSheet(null,'out'); return; }
   if(e.target.closest('#editBud')){ budgetSheet(); return; }
