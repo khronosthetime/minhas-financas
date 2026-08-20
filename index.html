@@ -49,6 +49,14 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 /* Top bar */
 .topbar{position:sticky; top:0; z-index:20; background:color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter:saturate(160%) blur(14px); -webkit-backdrop-filter:saturate(160%) blur(14px); padding:calc(var(--safe-top) + 14px) 20px 12px; border-bottom:.8px solid var(--border);}
 .topbar h1{margin:0; font-size:13px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);}
+.top-row{display:flex; align-items:center; justify-content:space-between;}
+.eye-btn{width:30px; height:30px; display:grid; place-items:center; color:var(--muted); border-radius:8px;}
+.eye-btn:active{background:var(--surface);}
+.eye-btn svg{width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}
+.priv .tnum{filter:blur(8px); transition:filter .12s;}
+.priv .rentab{filter:blur(6px);}
+.tx-search{width:100%; padding:10px 14px; border:.8px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text); outline:none; font-size:14px; margin:0 0 12px; -webkit-appearance:none;}
+.tx-search:focus{border-color:var(--brand); box-shadow:var(--focus);}
 .month-nav{display:flex; align-items:center; justify-content:space-between; margin-top:8px;}
 .month-nav .m{font-size:20px; font-weight:700; letter-spacing:-.01em; text-transform:capitalize;}
 .month-nav button{width:38px; height:38px; border-radius:var(--r-ui); border:.8px solid var(--border); background:var(--surface); display:grid; place-items:center; color:var(--text); font-size:18px; font-weight:600;}
@@ -281,7 +289,7 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 
 <div id="app">
   <div class="topbar">
-    <h1>Minhas Finanças</h1>
+    <div class="top-row"><h1>Minhas Finanças</h1><button id="eyeToggle" class="eye-btn" aria-label="Ocultar valores"></button></div>
     <div class="month-nav">
       <button id="prevM" aria-label="Mês anterior">‹</button>
       <div class="m" id="monthLbl">Agosto 2026</div>
@@ -409,12 +417,12 @@ function insights(){
   // cobrança repetida: mesmo valor (>=R$20) e mesmo nome normalizado
   outer: for(let i=0;i<exp.length;i++){ for(let j=i+1;j<exp.length;j++){
     if(exp[i].amount===exp[j].amount && exp[i].amount>=2000 && exp[i].note && NORM(exp[i].note)===NORM(exp[j].note)){
-      out.push({level:'warn', text:`Possível cobrança repetida: ${esc(exp[i].note)} de ${fmt(exp[i].amount)} apareceu 2 vezes.`}); break outer;
+      out.push({level:'warn', text:`Possível cobrança repetida: ${esc(exp[i].note)} de <span class="tnum">${fmt(exp[i].amount)}</span> apareceu 2 vezes.`}); break outer;
     }
   }}
   // assinaturas
   const subs=exp.filter(t=>t.categoryId==='c_sub'); const subTot=subs.reduce((s,t)=>s+t.amount,0);
-  if(subTot>0 && subs.length>=2) out.push({level:'info', text:`Suas assinaturas somam ${fmt(subTot)} este mês, em ${subs.length} cobranças.`});
+  if(subTot>0 && subs.length>=2) out.push({level:'info', text:`Suas assinaturas somam <span class="tnum">${fmt(subTot)}</span> este mês, em ${subs.length} cobranças.`});
   // concentração
   const byCat={}; exp.forEach(t=>byCat[t.categoryId]=(byCat[t.categoryId]||0)+t.amount);
   const top=Object.entries(byCat).sort((a,b)=>b[1]-a[1])[0];
@@ -468,6 +476,7 @@ function renderInicio(){
   const shownTotal = shown.reduce((s,x)=>s+x.amount,0);
   html+=`<div class="sec-title">${fcat?esc(fcat.name)+`<button id="clearFilter">Ver todos</button>`:'Lançamentos'}</div>`;
   if(fcat) html+=`<div style="font-size:12.5px;color:var(--muted);margin:-6px 2px 12px">${shown.length} lançamento${shown.length===1?'':'s'} · ${fmt(shownTotal)}</div>`;
+  if(list.length>5) html+=`<input id="txSearch" class="tx-search" placeholder="Buscar lançamento" autocomplete="off">`;
   if(!shown.length){
     html+=`<div class="empty">${homeFilter?'<b>Nada aqui neste mês</b>Sem lançamentos de '+esc(fcat.name)+'.':'<b>Nenhum lançamento ainda</b>Toque no botão + para registrar seu primeiro gasto ou receita deste mês.'}</div>`;
   }else{
@@ -839,6 +848,16 @@ function patrimonioSheet(existing, defClasse){
     else{ db.patrimonio.push({id:uid(),nome,classe,valor,aporte,rentab}); }
     save(); closeSheet(); renderAll();
   });
+}
+
+/* ---------- OCULTAR VALORES + BUSCA ---------- */
+const EYE_OPEN='<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF='<svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2"/><path d="M9.4 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.3 3.2M6.2 6.2A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 3.3-.6"/></svg>';
+function applyPriv(){ const on=!!(db.settings&&db.settings.hideValues); $('#app').classList.toggle('priv',on); const b=$('#eyeToggle'); if(b) b.innerHTML=on?EYE_OFF:EYE_OPEN; }
+function filterTx(q){
+  q=NORM(q.trim());
+  document.querySelectorAll('#scr-inicio .tx').forEach(r=>{ r.style.display=(!q||NORM(r.textContent).includes(q))?'':'none'; });
+  document.querySelectorAll('#scr-inicio .day-head').forEach(h=>h.style.display=q?'none':'');
 }
 
 /* ---------- ALERTAS DE META ---------- */
@@ -1535,6 +1554,8 @@ $('#fab').addEventListener('click',()=>txSheet(null));
 $('#chatSend').addEventListener('click',chatSend);
 $('#chatIn').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); chatSend(); } });
 $('#keypad').addEventListener('click',e=>{ const b=e.target.closest('[data-k]'); if(!b) return; const k=b.dataset.k; if(k==='del'){ lockBuf=lockBuf.slice(0,-1); paintDots(); } else if(k==='face'){ faceUnlock(); } else pinDigit(k); });
+$('#eyeToggle').addEventListener('click',()=>{ db.settings=db.settings||{}; db.settings.hideValues=!db.settings.hideValues; save(); applyPriv(); });
+$('#app').addEventListener('input',e=>{ if(e.target.id==='txSearch') filterTx(e.target.value); });
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   activeTab=t.dataset.tab;
@@ -1579,6 +1600,7 @@ $('#app').addEventListener('change',e=>{
 });
 
 renderAll();
+applyPriv();
 if(db.settings && db.settings.pinHash) showLock();
 })();
 </script>
