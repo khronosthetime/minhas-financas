@@ -91,6 +91,10 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .donut-center{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;}
 .donut-lbl{font-size:10px; color:var(--muted); font-weight:600; letter-spacing:.09em; text-transform:uppercase;}
 .donut-val{font-size:16px; font-weight:700; margin-top:2px;}
+.pamt{display:flex; flex-direction:column; align-items:flex-end; gap:2px;}
+.rentab{font-size:11.5px; font-weight:700; font-variant-numeric:tabular-nums;}
+.rentab.up{color:var(--pos);}
+.rentab.down{color:var(--neg);}
 .cbar .row{display:flex; justify-content:space-between; font-size:13.5px; font-weight:600; margin-bottom:6px;}
 .cbar .row .nm{display:flex; align-items:center; gap:8px;}
 .dot{width:10px; height:10px; border-radius:50%; flex:none;}
@@ -711,10 +715,12 @@ function donut(classes, total, size){
 
 function patrRow(i){
   const c=patrClass(i.classe); const neg=c.passivo;
+  const r=(i.rentab!=null && i.rentab!=='' && !isNaN(i.rentab))?Number(i.rentab):null;
+  const rline = r!==null ? `<span class="rentab ${r>=0?'up':'down'}">${r>=0?'▲':'▼'} ${Math.abs(r).toFixed(2).replace('.',',')}%</span>` : '';
   return `<button class="tx" data-patr="${i.id}">
     <span class="ic" style="background:${c.cor}">${initials(i.nome)}</span>
     <span class="mid"><div class="nm">${esc(i.nome)}</div><div class="mt">${esc(c.nome)}${i.aporte? ' · '+fmt(i.aporte)+'/mês':''}</div></span>
-    <span class="amt tnum" style="${neg?'color:var(--neg)':''}">${neg?'− ':''}${fmt(i.valor)}</span>
+    <span class="pamt"><span class="amt tnum" style="${neg?'color:var(--neg)':''}">${neg?'− ':''}${fmt(i.valor)}</span>${rline}</span>
   </button>`;
 }
 function renderPatrimonio(){
@@ -783,6 +789,7 @@ function patrimonioSheet(existing, defClasse){
       <div class="field"><label>Classe</label><div class="chips" id="pClasses">${PATR_CLASSES.map(c=>`<button class="chip ${c.id===classe?'on':''}" data-pc="${c.id}"><span class="dot" style="background:${c.cor}"></span>${esc(c.nome)}</button>`).join('')}</div></div>
       <div class="field"><label>Valor atual</label><input type="text" id="pVal" placeholder="0,00" inputmode="numeric"></div>
       <div class="field"><label>Aporte mensal (opcional)</label><input type="text" id="pAporte" placeholder="0,00" inputmode="numeric"></div>
+      <div class="field"><label>Rentabilidade % em 12 meses (opcional)</label><input type="text" id="pRentab" inputmode="decimal" placeholder="Ex: 38,55 ou -5,2" value="${ed&&ed.rentab!=null&&ed.rentab!==''?String(ed.rentab).replace('.',','):''}"></div>
       ${ed?'<button class="btn ghost" id="delBtn">Excluir posição</button>':''}
     </div>`);
   const getVal=bindMoney(sheetContent.querySelector('#pVal'), ed?ed.valor:0);
@@ -793,10 +800,12 @@ function patrimonioSheet(existing, defClasse){
   sheetContent.querySelector('#shSave').addEventListener('click',()=>{
     const nome=sheetContent.querySelector('#pName').value.trim();
     const valor=getVal(); const aporte=getAp();
+    const rr=sheetContent.querySelector('#pRentab').value.trim().replace(',','.');
+    const rentab = (rr!=='' && !isNaN(parseFloat(rr))) ? parseFloat(rr) : null;
     if(!nome){ alert('Dê um nome.'); return; }
     if(!valor){ alert('Informe o valor atual.'); return; }
-    if(ed){ Object.assign(ed,{nome,classe,valor,aporte}); }
-    else{ db.patrimonio.push({id:uid(),nome,classe,valor,aporte}); }
+    if(ed){ Object.assign(ed,{nome,classe,valor,aporte,rentab}); }
+    else{ db.patrimonio.push({id:uid(),nome,classe,valor,aporte,rentab}); }
     save(); closeSheet(); renderAll();
   });
 }
