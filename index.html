@@ -326,7 +326,8 @@ function defaults(){
     bills:[],
     budgets:{},
     alerted:{},
-    chat:[]
+    chat:[],
+    settings:{}
   };
 }
 let db;
@@ -515,6 +516,8 @@ function renderAjustes(){
   const nTx=db.transactions.length, nBills=db.bills.length;
   const np=('Notification' in window)?Notification.permission:'unsupported';
   const notifTxt = np==='granted' ? 'Ativado. Você recebe um aviso ao cruzar cada faixa.' : np==='denied' ? 'Bloqueado nos ajustes do iPhone. O aviso ainda aparece dentro do app.' : np==='unsupported' ? 'Este navegador não suporta. O aviso aparece dentro do app.' : 'Toque para permitir. O aviso também aparece dentro do app.';
+  const pushOn=!!(db.settings&&db.settings.pushOn);
+  const pushTxt = pushOn ? 'Ativado. Alerta chega no celular mesmo com o app fechado.' : 'Toque para ativar (precisa do servidor na nuvem).';
   let html=`
     <div class="sec-title">Importar</div>
     <div class="list">
@@ -528,7 +531,10 @@ function renderAjustes(){
     <div class="sec-title">Categorias</div>
     <div class="list"><button class="item" id="catBtn"><div class="t">Gerenciar categorias<small>${db.categories.length} categorias</small></div><span class="chev">›</span></button></div>
     <div class="sec-title">Alertas de meta</div>
-    <div class="list"><button class="item" id="notifBtn"><div class="t">Avisar em 50%, 75% e 100%<small>${notifTxt}</small></div><span class="chev">›</span></button></div>
+    <div class="list">
+      <button class="item" id="notifBtn"><div class="t">Avisar em 50%, 75% e 100%<small>${notifTxt}</small></div><span class="chev">›</span></button>
+      <button class="item" id="pushBtn"><div class="t">Alertas com o app fechado<small>${pushTxt}</small></div><span class="chev">›</span></button>
+    </div>
     <div class="sec-title">Aparência</div>
     <div class="list"><div class="item"><div class="t">Tema<small>Segue o modo claro ou escuro do iPhone</small></div></div></div>
     <div class="list"><button class="item danger" id="wipeBtn"><div class="t">Apagar todos os dados<small>Remove tudo deste aparelho. Não dá para desfazer.</small></div></button></div>
@@ -605,7 +611,7 @@ function chatSend(){
     const r=`${p.type==='income'?'Recebimento':'Gasto'} registrado: ${p.name} · ${c.name} · ${fmt(p.cents)}${quando}`;
     db.chat.push({role:'bot',text:r,txId:tx.id}); appendMsg('bot',r,tx.id);
     const [Y,M]=p.date.split('-').map(Number); curY=Y; curM=M-1;
-    if(p.type==='expense') checkGoals(p.catId);
+    if(p.type==='expense'){ checkGoals(p.catId); pushSync(); }
   }
   if(db.chat.length>80) db.chat=db.chat.slice(-80);
   save(); inp.value=''; inp.focus(); scrollChat();
@@ -656,6 +662,55 @@ function checkGoals(catIds){
     db.alerted[key]=crossed;
   });
   save();
+}
+
+/* ---------- PUSH (alerta com app fechado) ---------- */
+const VAPID_PUBLIC='BMYBTCx7INlsh0w2Z574OYcycvrgcvB1f9UiY2GPcrBlnFQVfA19BnC0sKBliFKHN0TByc5TeKzMm51zhlFMLOc';
+function urlB64ToUint8(base64){
+  const pad='='.repeat((4-base64.length%4)%4);
+  const b=(base64+pad).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(b); const arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+function buildSnapshot(){
+  const ry=now.getFullYear(), rm=now.getMonth()+1;
+  const ym=ry+'-'+String(rm).padStart(2,'0'); const cats={};
+  Object.keys(db.budgets||{}).forEach(cid=>{
+    if(db.budgets[cid]>0){ const c=catById(cid); if(!c) return;
+      let spent=0; db.transactions.forEach(t=>{ if(t.type==='expense'&&t.categoryId===cid && t.date.slice(0,7)===ym) spent+=t.amount; });
+      cats[cid]={name:c.name,budget:db.budgets[cid],spent};
+    }
+  });
+  return {ym,cats};
+}
+async function pushSync(){
+  const s=db.settings||{};
+  if(!s.pushOn||!s.pushServer||!s.pushSub) return false;
+  try{ const r=await fetch(s.pushServer+'/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:s.clientId,subscription:s.pushSub,snapshot:buildSnapshot()})}); return r.ok; }
+  catch(e){ return false; }
+}
+async function enablePush(){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)){ toast('Este aparelho não suporta. Instale o app na Tela de Início primeiro.'); return; }
+  db.settings=db.settings||{};
+  const entered=prompt('Cole o endereço do servidor (Vercel):', db.settings.pushServer||'https://minhas-financas-push.vercel.app');
+  if(entered===null) return;
+  const server=entered.trim().replace(/\/+$/,'');
+  if(!/^https:\/\/.+/.test(server)){ toast('Endereço inválido. Deve começar com https://'); return; }
+  db.settings.pushServer=server;
+  let perm;
+  try{ perm=await Notification.requestPermission(); }catch(e){ perm='denied'; }
+  if(perm!=='granted'){ toast('Permissão de notificação negada.'); save(); renderAll(); return; }
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(VAPID_PUBLIC)});
+    db.settings.clientId=db.settings.clientId||(uid()+uid());
+    db.settings.pushSub=sub.toJSON(); db.settings.pushOn=true; save();
+    const ok=await pushSync();
+    toast(ok?'Alertas com o app fechado ativados.':'Ativado no app, mas o servidor não respondeu. Confira o endereço.');
+  }catch(e){ toast('Não deu pra ativar: '+(e.message||e)); }
+  renderAll();
 }
 
 /* ---------- SHEET ---------- */
@@ -727,7 +782,7 @@ function txSheet(existing){
     // jump to month of the tx
     const [Y,M]=date.split('-').map(Number); curY=Y; curM=M-1;
     renderAll();
-    if(type==='expense') checkGoals(catId);
+    if(type==='expense'){ checkGoals(catId); pushSync(); }
   });
 }
 
@@ -799,7 +854,7 @@ function toggleBillPaid(id){
       db.transactions.push({id:uid(),type:'expense',amount:b.amount,categoryId:'c_home',date,note:b.name,_bill:b.id,_o:Date.now()});
     }
   }
-  save(); renderAll();
+  save(); renderAll(); pushSync();
 }
 
 /* ---------- BUDGET SHEET ---------- */
@@ -1067,7 +1122,7 @@ function reviewFatura(banco, items){
       save(); closeSheet();
       if(lastDate){ const [Y,M]=lastDate.split('-').map(Number); curY=Y; curM=M-1; }
       renderAll();
-      checkGoals([...new Set(chosen.map(i=>i.cat))]);
+      checkGoals([...new Set(chosen.map(i=>i.cat))]); pushSync();
       alert(add+' lançamento'+(add===1?'':'s')+' adicionado'+(add===1?'':'s')+(dup?'. '+dup+' já existia'+(dup===1?'':'m')+' e foram ignorados.':'.'));
     });
   };
@@ -1134,6 +1189,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
   if(e.target.closest('#notifBtn')){ if('Notification' in window){ Notification.requestPermission().then(p=>{ if(p==='granted') toast('Alertas ativados no celular.'); renderAll(); }); } else { toast('Este navegador não suporta notificações.'); } return; }
+  if(e.target.closest('#pushBtn')){ enablePush(); return; }
   if(e.target.closest('#wipeBtn')){ if(confirm('Apagar TODOS os dados deste aparelho? Não dá para desfazer.')){ if(confirm('Tem certeza mesmo? Considere exportar um backup antes.')){ db=defaults(); save(); renderAll(); } } return; }
 });
 $('#app').addEventListener('change',e=>{

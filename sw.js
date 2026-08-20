@@ -1,4 +1,4 @@
-const CACHE = 'financas-v4';
+const CACHE = 'financas-v5';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png',
   './vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs'];
 
@@ -22,4 +22,24 @@ self.addEventListener('fetch', e => {
       return res;
     }).catch(() => caches.match('./index.html')))
   );
+});
+
+// Web Push: alerta de meta com o app fechado.
+self.addEventListener('push', e => {
+  let d = { title: 'Meta de gasto', body: '' };
+  try { d = e.data.json(); } catch (_) { if (e.data) d.body = e.data.text(); }
+  e.waitUntil(self.registration.showNotification(d.title || 'Meta de gasto', {
+    body: d.body || '',
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    tag: d.tag || 'meta',
+    renotify: true
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+    for (const c of cs) { if ('focus' in c) return c.focus(); }
+    return clients.openWindow('./index.html');
+  }));
 });
