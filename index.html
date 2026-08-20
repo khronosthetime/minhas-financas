@@ -507,7 +507,8 @@ function renderAjustes(){
   let html=`
     <div class="sec-title">Importar</div>
     <div class="list">
-      <button class="item" id="faturaBtn"><div class="t">Importar fatura de cartão<small>Lê o PDF da fatura (XP ou Nubank) e lança as compras. Tudo no aparelho.</small></div><span class="chev">›</span></button>
+      <button class="item" id="extratoBtn"><div class="t">Importar extrato (OFX/CSV)<small>Lê o extrato do Nubank ou da XP e lança tudo, entradas e saídas. Mais preciso que o PDF.</small></div><span class="chev">›</span></button>
+      <button class="item" id="faturaBtn"><div class="t">Importar fatura de cartão (PDF)<small>Lê o PDF da fatura (XP ou Nubank) e lança as compras.</small></div><span class="chev">›</span></button>
     </div>
     <div class="sec-title">Seus dados</div>
     <div class="list">
@@ -526,7 +527,8 @@ function renderAjustes(){
     <div class="list"><button class="item danger" id="wipeBtn"><div class="t">Apagar todos os dados<small>Remove tudo deste aparelho. Não dá para desfazer.</small></div></button></div>
     <div class="foot">Minhas Finanças · versão 1.0<br>Todos os dados ficam salvos apenas neste iPhone. Nada é enviado para a internet.</div>
     <input type="file" id="importFile" accept="application/json,.json" class="hidden">
-    <input type="file" id="faturaFile" accept="application/pdf,.pdf" class="hidden">`;
+    <input type="file" id="faturaFile" accept="application/pdf,.pdf" class="hidden">
+    <input type="file" id="extratoFile" accept=".ofx,.csv,text/csv,application/x-ofx,application/vnd.intu.qfx" class="hidden">`;
   $('#scr-ajustes').innerHTML=html;
 }
 
@@ -1125,6 +1127,135 @@ function reviewFatura(banco, items){
   draw();
 }
 
+/* ================= IMPORTAR EXTRATO (OFX / CSV) — Nubank, XP ================= */
+function normDate(s){
+  s=(s||'').trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  let m=s.match(/^(\d{2})\/(\d{2})\/(\d{4})/); if(m) return `${m[3]}-${m[2]}-${m[1]}`;
+  m=s.match(/^(\d{2})\/(\d{2})\/(\d{2})$/); if(m) return `20${m[3]}-${m[2]}-${m[1]}`;
+  return localDate(now);
+}
+function moneyToCents(raw){
+  if(raw==null) return null;
+  let s=String(raw).trim(); const neg=/^-|-\s*$/.test(s)||/^\(.*\)$/.test(s);
+  s=s.replace(/[^\d.,]/g,'');
+  if(s.includes(',')&&s.includes('.')){ if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',','.'); else s=s.replace(/,/g,''); }
+  else if(s.includes(',')) s=s.replace(',','.');
+  const v=parseFloat(s); if(isNaN(v)) return null;
+  const cents=Math.round(Math.abs(v)*100); if(!cents) return null;
+  return {cents, neg: neg || v<0};
+}
+function cleanMemo(s){ let d=(s||'').replace(/\s+/g,' ').trim().slice(0,42); return d? d.charAt(0).toUpperCase()+d.slice(1) : 'Lançamento'; }
+function incomeDefaultCat(){ return catById('c_extra')?'c_extra':((db.categories.find(c=>c.type==='income')||{}).id); }
+
+function parseOFX(text){
+  const tagv=(b,t)=>{ const m=b.match(new RegExp('<'+t+'>([^<\\r\\n]*)','i')); return m?m[1].trim():''; };
+  const parts=text.split(/<STMTTRN>/i).slice(1);
+  const out=[];
+  parts.forEach(p=>{
+    const money=moneyToCents(tagv(p,'TRNAMT')); if(!money) return;
+    const desc=tagv(p,'MEMO')||tagv(p,'NAME')||tagv(p,'PAYEE');
+    out.push({date:normDate((tagv(p,'DTPOSTED').match(/^(\d{4})(\d{2})(\d{2})/)||[]).slice(1).join('-')||''), desc, cents:money.cents, type:money.neg?'expense':'income'});
+  });
+  return out;
+}
+function parseCSV(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length) return [];
+  const delim=(lines[0].split(';').length>lines[0].split(',').length)?';':',';
+  const rows=lines.map(l=>l.split(delim).map(c=>c.replace(/^"|"$/g,'').trim()));
+  const header=rows[0].some(c=>/data|date|valor|amount|descri|title|hist|lan[cç]/i.test(c));
+  const out=[];
+  for(let i=header?1:0;i<rows.length;i++){
+    const r=rows[i]; if(r.length<2) continue;
+    let di=-1; r.forEach((c,ix)=>{ if(di<0 && (/^\d{4}-\d{2}-\d{2}/.test(c)||/^\d{2}\/\d{2}\/\d{2,4}/.test(c))) di=ix; });
+    let ai=-1; r.forEach((c,ix)=>{ if(ix!==di && ai<0){ const cc=c.replace(/\s/g,''); if(/\d/.test(cc)&&/^-?R?\$?-?\d+([.,]\d+)*-?$/.test(cc)) ai=ix; } });
+    if(di<0||ai<0) continue;
+    let desc=''; r.forEach((c,ix)=>{ if(ix!==di&&ix!==ai&&!/^\d+$/.test(c)&&c.length>desc.length) desc=c; });
+    const money=moneyToCents(r[ai]); if(!money) continue;
+    out.push({date:normDate(r[di]), desc:desc||'Lançamento', cents:money.cents, type:money.neg?'expense':'income'});
+  }
+  // Fatura de cartão vem toda positiva (só gastos). Se nada é negativo, trata tudo como despesa.
+  if(out.length && out.every(t=>t.type==='income')) out.forEach(t=>t.type='expense');
+  return out;
+}
+
+async function importExtrato(file){
+  openSheet(`<div class="sh-head"><button id="shCancel">Cancelar</button><h2>Lendo extrato</h2><span></span></div><div class="body"><div class="imp-loading"><div class="spin"></div><div>Lendo o arquivo no seu aparelho...</div></div></div>`);
+  sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  try{
+    const text=await file.text();
+    const isOFX=/<OFX>|OFXHEADER|<STMTTRN>/i.test(text);
+    let raw=isOFX?parseOFX(text):parseCSV(text);
+    raw=raw.filter(t=>t.cents>0);
+    const items=raw.map(t=>({date:t.date, name:cleanMemo(t.desc), rawDesc:t.desc, cents:t.cents, type:t.type,
+      cat: t.type==='income'?incomeDefaultCat():appCatFor(t.desc), on:true}));
+    reviewExtrato(file.name.replace(/\.(ofx|csv)$/i,''), items);
+  }catch(e){
+    openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Não deu certo</h2><span></span></div><div class="body"><p style="color:var(--muted);font-size:14px">Não consegui ler esse arquivo. Exporte o extrato do Nubank ou da XP em OFX ou CSV e tente de novo.</p><p style="color:var(--muted);font-size:12px">Detalhe: ${esc(String(e.message||e))}</p></div>`);
+    sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  }
+}
+function reviewExtrato(source, items){
+  if(!items.length){
+    openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Extrato vazio</h2><span></span></div><div class="body"><p style="color:var(--muted);font-size:14px">Não encontrei lançamentos nesse arquivo. Se for OFX/CSV do Nubank ou da XP e mesmo assim não leu, me manda o arquivo que eu ajusto o leitor.</p></div>`);
+    sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet); return;
+  }
+  const expCats=db.categories.filter(c=>c.type==='expense');
+  const incCats=db.categories.filter(c=>c.type==='income');
+  const draw=()=>{
+    const on=items.filter(i=>i.on);
+    const inTot=on.filter(i=>i.type==='income').reduce((s,i)=>s+i.cents,0);
+    const outTot=on.filter(i=>i.type==='expense').reduce((s,i)=>s+i.cents,0);
+    const rows=items.map((i,idx)=>{
+      const cats=i.type==='income'?incCats:expCats;
+      return `<div class="imp-row ${i.on?'on':'off'}">
+        <button class="cb" data-toggle="${idx}" aria-label="Incluir">${i.on?'✓':''}</button>
+        <div class="mid">
+          <div class="nm">${esc(i.name)}</div>
+          <div class="sub"><span class="dt">${dayLabel(i.date)}</span>
+            <select data-cat="${idx}">${cats.map(c=>`<option value="${c.id}" ${c.id===i.cat?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="amt tnum" style="color:${i.type==='income'?'var(--pos)':'var(--text)'}">${i.type==='income'?'+':'−'} ${fmt(i.cents)}</div>
+      </div>`;
+    }).join('');
+    openSheet(`
+      <div class="sh-head"><button id="shCancel">Cancelar</button><h2>Revisar extrato</h2><span></span></div>
+      <div class="body">
+        <div class="imp-summary"><div class="b">${esc(source||'Extrato')}</div><div class="t tnum">+${fmt(inTot)} · −${fmt(outTot)}</div></div>
+        <div class="imp-tools"><button id="selAll">Todas</button><button id="selNone">Nenhuma</button><span class="count">${on.length} de ${items.length}</span></div>
+        ${rows}
+        <button class="btn" id="impDo" style="margin-top:16px">Adicionar ${on.length} lançamento${on.length===1?'':'s'}</button>
+        <p style="color:var(--muted);font-size:11.5px;text-align:center;margin-top:10px">Lançamentos repetidos (data, valor e nome) são ignorados automaticamente.</p>
+      </div>`);
+    sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+    sheetContent.querySelector('#selAll').addEventListener('click',()=>{items.forEach(i=>i.on=true);draw();});
+    sheetContent.querySelector('#selNone').addEventListener('click',()=>{items.forEach(i=>i.on=false);draw();});
+    sheetContent.querySelectorAll('[data-toggle]').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.toggle;items[i].on=!items[i].on;draw();}));
+    sheetContent.querySelectorAll('[data-cat]').forEach(s=>s.addEventListener('change',()=>{items[+s.dataset.cat].cat=s.value;}));
+    sheetContent.querySelector('#impDo').addEventListener('click',()=>{
+      const chosen=items.filter(i=>i.on);
+      if(!chosen.length){ alert('Selecione ao menos um lançamento.'); return; }
+      const existing=new Set(db.transactions.map(t=>t.date+'|'+t.type+'|'+t.amount+'|'+NORM(t.note||'').slice(0,20)));
+      let add=0, dup=0, lastDate=null; const cats=new Set();
+      chosen.forEach(i=>{
+        const key=i.date+'|'+i.type+'|'+i.cents+'|'+NORM(i.name).slice(0,20);
+        if(existing.has(key)){ dup++; return; }
+        existing.add(key);
+        db.transactions.push({id:uid(),type:i.type,amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_extrato:1});
+        add++; lastDate=i.date; if(i.type==='expense') cats.add(i.cat);
+      });
+      save(); closeSheet();
+      if(lastDate){ const [Y,M]=lastDate.split('-').map(Number); curY=Y; curM=M-1; }
+      renderAll();
+      if(cats.size){ checkGoals([...cats]); pushSync(); }
+      alert(add+' lançamento'+(add===1?'':'s')+' adicionado'+(add===1?'':'s')+(dup?'. '+dup+' já existia'+(dup===1?'':'m')+' e foram ignorados.':'.'));
+    });
+  };
+  draw();
+}
+
 /* ---------- BACKUP ---------- */
 async function exportBackup(){
   const data=JSON.stringify(db,null,2);
@@ -1184,6 +1315,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#exportBtn')){ exportBackup(); return; }
   if(e.target.closest('#importBtn')){ $('#importFile').click(); return; }
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
+  if(e.target.closest('#extratoBtn')){ $('#extratoFile').click(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
   if(e.target.closest('#notifBtn')){ if('Notification' in window){ Notification.requestPermission().then(p=>{ if(p==='granted') toast('Alertas ativados no celular.'); renderAll(); }); } else { toast('Este navegador não suporta notificações.'); } return; }
   if(e.target.closest('#pushBtn')){ enablePush(); return; }
@@ -1192,6 +1324,7 @@ $('#app').addEventListener('click',e=>{
 $('#app').addEventListener('change',e=>{
   if(e.target.id==='importFile' && e.target.files[0]){ importBackup(e.target.files[0]); e.target.value=''; }
   if(e.target.id==='faturaFile' && e.target.files[0]){ importFatura(e.target.files[0]); e.target.value=''; }
+  if(e.target.id==='extratoFile' && e.target.files[0]){ importExtrato(e.target.files[0]); e.target.value=''; }
 });
 
 renderAll();
