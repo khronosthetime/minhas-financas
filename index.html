@@ -271,6 +271,11 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .keypad .k-face,.keypad .k-del{background:none; border:none; color:var(--brand); font-size:15px; font-weight:600;}
 .keypad .k-blank{visibility:hidden;}
 
+/* Insights (Início) */
+.insight{background:var(--surface); border:.8px solid var(--border); border-left:3px solid var(--brand); border-radius:var(--r-ui); padding:11px 14px; margin-bottom:8px; font-size:13.5px; font-weight:600; line-height:1.4; color:var(--text);}
+.insight.ins-warn{border-left-color:var(--warn);}
+.insight.ins-good{border-left-color:var(--pos);}
+
 .hidden{display:none!important;}
 </style>
 
@@ -396,6 +401,29 @@ function renderMonthLabel(){ $('#monthLbl').textContent=MONTHS[curM]+' '+curY; }
 function esc(s){return (s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 function initials(name){return (name||'?').trim().slice(0,1).toUpperCase();}
 
+function insights(){
+  const exp=txInMonth().filter(t=>t.type==='expense' && t.categoryId!=='c_aporte');
+  const out=[];
+  if(exp.length<3) return out;
+  const total=exp.reduce((s,t)=>s+t.amount,0);
+  // cobrança repetida: mesmo valor (>=R$20) e mesmo nome normalizado
+  outer: for(let i=0;i<exp.length;i++){ for(let j=i+1;j<exp.length;j++){
+    if(exp[i].amount===exp[j].amount && exp[i].amount>=2000 && exp[i].note && NORM(exp[i].note)===NORM(exp[j].note)){
+      out.push({level:'warn', text:`Possível cobrança repetida: ${esc(exp[i].note)} de ${fmt(exp[i].amount)} apareceu 2 vezes.`}); break outer;
+    }
+  }}
+  // assinaturas
+  const subs=exp.filter(t=>t.categoryId==='c_sub'); const subTot=subs.reduce((s,t)=>s+t.amount,0);
+  if(subTot>0 && subs.length>=2) out.push({level:'info', text:`Suas assinaturas somam ${fmt(subTot)} este mês, em ${subs.length} cobranças.`});
+  // concentração
+  const byCat={}; exp.forEach(t=>byCat[t.categoryId]=(byCat[t.categoryId]||0)+t.amount);
+  const top=Object.entries(byCat).sort((a,b)=>b[1]-a[1])[0];
+  if(top && total>0){ const pct=Math.round(top[1]/total*100); if(pct>=35){ const c=catById(top[0])||{name:'essa categoria'}; out.push({level:'info', text:`${pct}% dos seus gastos foram em ${esc(c.name)}.`}); } }
+  // comer fora vs mercado
+  const fora=byCat['c_food']||0, merc=byCat['c_market']||0;
+  if(fora>0 && merc>0){ const pct=Math.round(fora/(fora+merc)*100); if(pct>=65) out.push({level:'info', text:`${pct}% da sua alimentação foi fora de casa.`}); }
+  return out.slice(0,3);
+}
 function renderInicio(){
   const t=monthTotals();
   const list=txInMonth().slice().sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:(b._o||0)-(a._o||0));
@@ -415,6 +443,9 @@ function renderInicio(){
       <div class="tile pos"><div class="lbl">Entrou</div><div class="v tnum">${fmt(t.inc)}</div></div>
       <div class="tile neg"><div class="lbl">Saiu</div><div class="v tnum">${fmt(t.exp)}</div></div>
     </div>`;
+
+  const ins=insights();
+  if(ins.length){ html+=`<div class="sec-title">Insights</div>`; ins.forEach(x=>{ html+=`<div class="insight ins-${x.level}">${x.text}</div>`; }); }
 
   // filtro só vale se a categoria existe nos gastos do mês
   if(homeFilter && !byCat[homeFilter]) homeFilter=null;
