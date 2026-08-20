@@ -561,10 +561,19 @@ const CHAT_HINTS=[
   [['luz','agua','aluguel','condominio','gas','faxina','diarista','iptu'],'c_home'],
   [['farmacia','remedio','medico','dentista','consulta','exame','plano de saude','hospital'],'c_health'],
   [['cinema','show','ingresso','viagem','hotel','jogo','balada','academia','netflix show'],'c_fun'],
-  [['netflix','spotify','assinatura','internet','celular','telefone','plano','disney','hbo'],'c_sub'],
+  [['netflix','spotify','assinatura','assinaturas','internet','celular','telefone','plano','disney','hbo','claude','chatgpt','openai','anthropic','notion','github','youtube','prime','dropbox','icloud','canva'],'c_sub'],
   [['escola','curso','faculdade','livro','livraria','material','mensalidade'],'c_edu'],
 ];
-function chatHint(t){ for(const [ws,id] of CHAT_HINTS){ if(ws.some(w=>t.includes(NORM(w)))) return catById(id)?id:null; } return null; }
+// casa PALAVRA INTEIRA (evita "gas" dentro de "gastei", "no" dentro de "novo", etc.)
+function chatHint(t){
+  for(const [ws,id] of CHAT_HINTS){
+    for(const w of ws){
+      const nw=NORM(w).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      if(new RegExp('\\b'+nw+'\\b').test(t)) return catById(id)?id:null;
+    }
+  }
+  return null;
+}
 function nomeChat(d){ const p=d.split(/\s+/).filter(x=>x.length>1).slice(0,5); const s=p.join(' ').trim(); return s? s.charAt(0).toUpperCase()+s.slice(1) : ''; }
 function parseChatEntry(text){
   const t=NORM(text);
