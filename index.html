@@ -206,6 +206,12 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .cat-manage .nm{flex:1; font-size:14px; font-weight:600;}
 .cat-manage .x{color:var(--muted); font-size:15px; padding:6px;}
 
+/* Toast / alerta de meta */
+.toast{position:fixed; left:50%; top:calc(var(--safe-top) + 12px); transform:translate(-50%,-150%); z-index:80; max-width:456px; width:calc(100% - 32px); background:var(--surface); color:var(--text); border:.8px solid var(--border); border-left:3px solid var(--warn); border-radius:var(--r-ui); padding:12px 15px; font-size:13.5px; font-weight:600; line-height:1.35; transition:transform .32s cubic-bezier(.32,.72,0,1);}
+.toast.on{transform:translate(-50%,0);}
+.toast.over{border-left-color:var(--neg);}
+@media (prefers-reduced-motion:reduce){.toast{transition:none;}}
+
 /* Importar fatura */
 .imp-drop{border:.8px dashed var(--border); border-radius:var(--r-card); padding:26px 18px; text-align:center; color:var(--muted); font-size:13.5px; background:var(--surface-2);}
 .imp-loading{display:flex; flex-direction:column; align-items:center; gap:14px; padding:40px 18px; color:var(--muted); font-size:14px;}
@@ -296,7 +302,8 @@ function defaults(){
     ],
     transactions:[],
     bills:[],
-    budgets:{}
+    budgets:{},
+    alerted:{}
   };
 }
 let db;
@@ -483,6 +490,8 @@ function renderContas(){
 
 function renderAjustes(){
   const nTx=db.transactions.length, nBills=db.bills.length;
+  const np=('Notification' in window)?Notification.permission:'unsupported';
+  const notifTxt = np==='granted' ? 'Ativado. Você recebe um aviso ao cruzar cada faixa.' : np==='denied' ? 'Bloqueado nos ajustes do iPhone. O aviso ainda aparece dentro do app.' : np==='unsupported' ? 'Este navegador não suporta. O aviso aparece dentro do app.' : 'Toque para permitir. O aviso também aparece dentro do app.';
   let html=`
     <div class="sec-title">Importar</div>
     <div class="list">
@@ -495,6 +504,8 @@ function renderAjustes(){
     </div>
     <div class="sec-title">Categorias</div>
     <div class="list"><button class="item" id="catBtn"><div class="t">Gerenciar categorias<small>${db.categories.length} categorias</small></div><span class="chev">›</span></button></div>
+    <div class="sec-title">Alertas de meta</div>
+    <div class="list"><button class="item" id="notifBtn"><div class="t">Avisar em 50%, 75% e 100%<small>${notifTxt}</small></div><span class="chev">›</span></button></div>
     <div class="sec-title">Aparência</div>
     <div class="list"><div class="item"><div class="t">Tema<small>Segue o modo claro ou escuro do iPhone</small></div></div></div>
     <div class="list"><button class="item danger" id="wipeBtn"><div class="t">Apagar todos os dados<small>Remove tudo deste aparelho. Não dá para desfazer.</small></div></button></div>
@@ -510,6 +521,38 @@ function renderAll(){
   else if(activeTab==='orcamento') renderOrcamento();
   else if(activeTab==='contas') renderContas();
   else if(activeTab==='ajustes') renderAjustes();
+}
+
+/* ---------- ALERTAS DE META ---------- */
+function toast(msg, level){
+  const t=document.createElement('div'); t.className='toast '+(level||''); t.textContent=msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(()=>t.classList.add('on'));
+  setTimeout(()=>{ t.classList.remove('on'); setTimeout(()=>t.remove(),340); }, 4600);
+}
+function notifyGoal(msg, over){
+  toast(msg, over?'over':'warn');
+  try{ if('Notification' in window && Notification.permission==='granted') new Notification('Meta de gasto', {body:msg, icon:'./icon-192.png'}); }catch(e){}
+}
+// Confere metas das categorias afetadas e avisa ao cruzar 50/75/100% (uma vez por faixa por mês)
+function checkGoals(catIds){
+  db.alerted=db.alerted||{};
+  const ids=Array.isArray(catIds)?catIds:[catIds]; const seen=new Set();
+  ids.forEach(catId=>{
+    if(!catId||seen.has(catId)) return; seen.add(catId);
+    const bud=db.budgets[catId]; if(!bud) return;
+    let spent=0; txInMonth().forEach(t=>{ if(t.type==='expense'&&t.categoryId===catId) spent+=t.amount; });
+    const pct=spent/bud*100;
+    let crossed=0; if(pct>=100) crossed=100; else if(pct>=75) crossed=75; else if(pct>=50) crossed=50;
+    const key=ymOf()+':'+catId; const already=db.alerted[key]||0;
+    if(crossed>already){
+      const c=catById(catId)||{name:'categoria'};
+      const msg = crossed>=100 ? `Meta estourada: ${c.name} está em ${fmt(spent)} de ${fmt(bud)}.` : `${crossed}% da meta de ${c.name}: ${fmt(spent)} de ${fmt(bud)}.`;
+      notifyGoal(msg, crossed>=100);
+    }
+    db.alerted[key]=crossed;
+  });
+  save();
 }
 
 /* ---------- SHEET ---------- */
@@ -581,6 +624,7 @@ function txSheet(existing){
     // jump to month of the tx
     const [Y,M]=date.split('-').map(Number); curY=Y; curM=M-1;
     renderAll();
+    if(type==='expense') checkGoals(catId);
   });
 }
 
@@ -920,6 +964,7 @@ function reviewFatura(banco, items){
       save(); closeSheet();
       if(lastDate){ const [Y,M]=lastDate.split('-').map(Number); curY=Y; curM=M-1; }
       renderAll();
+      checkGoals([...new Set(chosen.map(i=>i.cat))]);
       alert(add+' lançamento'+(add===1?'':'s')+' adicionado'+(add===1?'':'s')+(dup?'. '+dup+' já existia'+(dup===1?'':'m')+' e foram ignorados.':'.'));
     });
   };
@@ -981,6 +1026,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#importBtn')){ $('#importFile').click(); return; }
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
+  if(e.target.closest('#notifBtn')){ if('Notification' in window){ Notification.requestPermission().then(p=>{ if(p==='granted') toast('Alertas ativados no celular.'); renderAll(); }); } else { toast('Este navegador não suporta notificações.'); } return; }
   if(e.target.closest('#wipeBtn')){ if(confirm('Apagar TODOS os dados deste aparelho? Não dá para desfazer.')){ if(confirm('Tem certeza mesmo? Considere exportar um backup antes.')){ db=defaults(); save(); renderAll(); } } return; }
 });
 $('#app').addEventListener('change',e=>{
