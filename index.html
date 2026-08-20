@@ -79,6 +79,12 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 
 /* Category breakdown bars */
 .cat-bars{display:flex; flex-direction:column; gap:12px;}
+.cbar{cursor:pointer; padding:4px 6px; margin:-4px -6px; border-radius:10px; -webkit-tap-highlight-color:transparent;}
+.cbar:active{background:var(--surface);}
+.cat-bars.filtering .cbar{opacity:.34; transition:opacity .15s ease;}
+.cat-bars.filtering .cbar.on{opacity:1;}
+.cbar.on .nm{color:var(--brand);}
+.cbar.on .track{box-shadow:0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent);}
 .cbar .row{display:flex; justify-content:space-between; font-size:13.5px; font-weight:600; margin-bottom:6px;}
 .cbar .row .nm{display:flex; align-items:center; gap:8px;}
 .dot{width:10px; height:10px; border-radius:50%; flex:none;}
@@ -325,6 +331,7 @@ function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ a
 const now=new Date();
 let curY=now.getFullYear(), curM=now.getMonth(); // 0-11
 let activeTab='inicio';
+let homeFilter=null; // categoria filtrada na tela Início (ou null)
 
 const $=s=>document.querySelector(s);
 const catById=id=>db.categories.find(c=>c.id===id);
@@ -364,11 +371,15 @@ function renderInicio(){
       <div class="tile neg"><div class="lbl">Saiu</div><div class="v tnum">${fmt(t.exp)}</div></div>
     </div>`;
 
+  // filtro só vale se a categoria existe nos gastos do mês
+  if(homeFilter && !byCat[homeFilter]) homeFilter=null;
+
   if(cats.length){
-    html+=`<div class="sec-title">Para onde foi</div><div class="cat-bars">`;
+    const filtering=!!homeFilter;
+    html+=`<div class="sec-title">Para onde foi${filtering?'<span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:600"> · toque pra filtrar</span>':''}</div><div class="cat-bars${filtering?' filtering':''}">`;
     cats.forEach(([cid,val])=>{
       const c=catById(cid)||{name:'Outros',color:'#6A7686'};
-      html+=`<div class="cbar">
+      html+=`<div class="cbar${cid===homeFilter?' on':''}" data-catbar="${cid}" role="button" tabindex="0">
         <div class="row"><span class="nm"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span><span class="tnum">${fmt(val)}</span></div>
         <div class="track"><i style="width:${Math.max(6,Math.round(val/maxCat*100))}%;background:${c.color}"></i></div>
       </div>`;
@@ -376,12 +387,16 @@ function renderInicio(){
     html+=`</div>`;
   }
 
-  html+=`<div class="sec-title">Lançamentos</div>`;
-  if(!list.length){
-    html+=`<div class="empty"><b>Nenhum lançamento ainda</b>Toque no botão + para registrar seu primeiro gasto ou receita deste mês.</div>`;
+  const fcat = homeFilter ? (catById(homeFilter)||{name:'Categoria'}) : null;
+  const shown = homeFilter ? list.filter(x=>x.categoryId===homeFilter) : list;
+  const shownTotal = shown.reduce((s,x)=>s+x.amount,0);
+  html+=`<div class="sec-title">${fcat?esc(fcat.name)+`<button id="clearFilter">Ver todos</button>`:'Lançamentos'}</div>`;
+  if(fcat) html+=`<div style="font-size:12.5px;color:var(--muted);margin:-6px 2px 12px">${shown.length} lançamento${shown.length===1?'':'s'} · ${fmt(shownTotal)}</div>`;
+  if(!shown.length){
+    html+=`<div class="empty">${homeFilter?'<b>Nada aqui neste mês</b>Sem lançamentos de '+esc(fcat.name)+'.':'<b>Nenhum lançamento ainda</b>Toque no botão + para registrar seu primeiro gasto ou receita deste mês.'}</div>`;
   }else{
     let lastDay='';
-    list.forEach(x=>{
+    shown.forEach(x=>{
       if(x.date!==lastDay){
         lastDay=x.date;
         html+=`<div class="day-head">${dayLabel(x.date)}</div>`;
@@ -1287,8 +1302,8 @@ function importBackup(file){
 }
 
 /* ---------- EVENTS ---------- */
-$('#prevM').addEventListener('click',()=>{ curM--; if(curM<0){curM=11;curY--;} renderAll(); });
-$('#nextM').addEventListener('click',()=>{ curM++; if(curM>11){curM=0;curY++;} renderAll(); });
+$('#prevM').addEventListener('click',()=>{ curM--; if(curM<0){curM=11;curY--;} homeFilter=null; renderAll(); });
+$('#nextM').addEventListener('click',()=>{ curM++; if(curM>11){curM=0;curY++;} homeFilter=null; renderAll(); });
 $('#fab').addEventListener('click',()=>txSheet(null));
 $('#chatSend').addEventListener('click',chatSend);
 $('#chatIn').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); chatSend(); } });
@@ -1306,6 +1321,8 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
 $('#app').addEventListener('click',e=>{
   const un=e.target.closest('[data-undo]'); if(un){ const id=un.dataset.undo; db.transactions=db.transactions.filter(t=>t.id!==id); save(); un.textContent='Desfeito'; un.style.color='var(--muted)'; un.style.pointerEvents='none'; un.removeAttribute('data-undo'); return; }
   if(e.target.closest('#clearChat')){ if(confirm('Limpar a conversa? Os lançamentos que você já registrou continuam salvos.')){ db.chat=[]; save(); renderChat(); } return; }
+  const cb=e.target.closest('[data-catbar]'); if(cb){ const cid=cb.dataset.catbar; homeFilter = homeFilter===cid?null:cid; renderInicio(); return; }
+  if(e.target.closest('#clearFilter')){ homeFilter=null; renderInicio(); return; }
   const tx=e.target.closest('[data-tx]'); if(tx){ const t=db.transactions.find(x=>x.id===tx.dataset.tx); if(t) txSheet(t); return; }
   const pb=e.target.closest('[data-paybill]'); if(pb){ toggleBillPaid(pb.dataset.paybill); return; }
   const eb=e.target.closest('[data-editbill]'); if(eb){ const b=db.bills.find(x=>x.id===eb.dataset.editbill); if(b) billSheet(b); return; }
