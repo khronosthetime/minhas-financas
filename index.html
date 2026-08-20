@@ -206,6 +206,30 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .cat-manage .nm{flex:1; font-size:14px; font-weight:600;}
 .cat-manage .x{color:var(--muted); font-size:15px; padding:6px;}
 
+/* Importar fatura */
+.imp-drop{border:.8px dashed var(--border); border-radius:var(--r-card); padding:26px 18px; text-align:center; color:var(--muted); font-size:13.5px; background:var(--surface-2);}
+.imp-loading{display:flex; flex-direction:column; align-items:center; gap:14px; padding:40px 18px; color:var(--muted); font-size:14px;}
+.spin{width:30px; height:30px; border:2.5px solid var(--border); border-top-color:var(--brand); border-radius:50%; animation:sp .7s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none;}}
+.imp-summary{background:var(--brand); color:var(--on-brand); border-radius:var(--r-card); padding:14px 16px; margin-bottom:12px;}
+.imp-summary .b{font-size:12px; opacity:.78; font-weight:600; letter-spacing:.04em;}
+.imp-summary .t{font-size:22px; font-weight:700; margin-top:2px; letter-spacing:-.01em;}
+.imp-tools{display:flex; gap:10px; align-items:center; margin-bottom:8px; font-size:12.5px; color:var(--muted);}
+.imp-tools button{font-size:12.5px; font-weight:600; color:var(--brand); padding:4px 2px;}
+.imp-tools .count{margin-left:auto; font-weight:600;}
+.imp-row{display:flex; align-items:center; gap:10px; padding:10px 2px; border-bottom:.8px solid var(--border);}
+.imp-row.off{opacity:.4;}
+.imp-row .cb{width:22px; height:22px; border-radius:6px; border:.8px solid var(--border); flex:none; display:grid; place-items:center; background:var(--surface); color:var(--on-brand); font-size:13px; font-weight:700;}
+.imp-row.on .cb{background:var(--brand); border-color:var(--brand);}
+.imp-row .mid{flex:1; min-width:0;}
+.imp-row .nm{font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.imp-row .sub{display:flex; align-items:center; gap:6px; margin-top:3px;}
+.imp-row select{font-size:11.5px; font-weight:600; color:var(--text); background:var(--surface-2); border:.8px solid var(--border); border-radius:6px; padding:3px 6px; max-width:150px; -webkit-appearance:none; appearance:none;}
+.imp-row .dt{font-size:11px; color:var(--muted);}
+.imp-row .amt{font-size:14px; font-weight:700; text-align:right; white-space:nowrap;}
+.tag-parc{font-size:9.5px; font-weight:700; color:var(--muted); border:.8px solid var(--border); border-radius:999px; padding:1px 6px;}
+
 .hidden{display:none!important;}
 </style>
 
@@ -232,7 +256,7 @@ input,select,textarea{font-family:inherit; font-size:16px;}
     <button class="tab" data-tab="orcamento">
       <svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M20 20H2"/></svg>Orçamento</button>
     <button class="tab" data-tab="contas">
-      <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Contas</button>
+      <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Fixos</button>
     <button class="tab" data-tab="ajustes">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14.2 2H9.8l-.4 2.5a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12a7 7 0 0 0 .1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2l.4 2.5h4.4l.4-2.5a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5A7 7 0 0 0 19 12Z"/></svg>Ajustes</button>
   </nav>
@@ -414,46 +438,56 @@ function billStatus(b){
   return 'open';
 }
 
+function billRow(b,ym,kind){
+  const st=billStatus(b);
+  const isDone=st==='ok';
+  const L={out:{ok:'Pago',late:'Vencida',open:'Em aberto'},in:{ok:'Recebido',late:'Atrasado',open:'A receber'}}[kind];
+  return `<div class="bill ${isDone?'paid':''}">
+    <button class="chk" data-paybill="${b.id}" aria-label="${kind==='in'?'Marcar como recebido':'Marcar como pago'}">${isDone?'✓':''}</button>
+    <div class="mid">
+      <div class="nm">${esc(b.name)}</div>
+      <div class="mt"><span class="pill ${st}">${L[st]}</span> ${kind==='in'?'recebe':'vence'} dia ${b.dueDay}${b.recurring?' · mensal':''}</div>
+    </div>
+    <div style="text-align:right"><div class="amt tnum">${fmt(b.amount)}</div></div>
+    <button class="edit" data-editbill="${b.id}" aria-label="Editar">✎</button>
+  </div>`;
+}
+
 function renderContas(){
-  const bills=db.bills.slice().sort((a,b)=>a.dueDay-b.dueDay);
   const ym=ymOf();
-  let due=0,paid=0;
-  bills.forEach(b=>{ if((b.paidMonths||[]).includes(ym)) paid+=b.amount; else due+=b.amount; });
+  const bills=db.bills.slice().sort((a,b)=>a.dueDay-b.dueDay);
+  const outs=bills.filter(b=>(b.kind||'out')==='out');
+  const ins=bills.filter(b=>b.kind==='in');
+  let due=0,paidOut=0; outs.forEach(b=>{ (b.paidMonths||[]).includes(ym)?paidOut+=b.amount:due+=b.amount; });
+  let toRecv=0; ins.forEach(b=>{ if(!(b.paidMonths||[]).includes(ym)) toRecv+=b.amount; });
 
   let html=`
     <div class="hero">
       <div class="lbl">A pagar em ${MONTHS[curM].toLowerCase()}</div>
       <div class="val tnum">${fmt(due)}</div>
-      <div class="sub">${paid>0? fmt(paid)+' já pago neste mês' : bills.length+' conta'+(bills.length===1?'':'s')+' cadastrada'+(bills.length===1?'':'s')}</div>
-    </div>
-    <div class="sec-title">Contas a pagar <button id="addBill">Adicionar</button></div>`;
+      <div class="sub">${toRecv>0? 'A receber: '+fmt(toRecv) : (paidOut>0? fmt(paidOut)+' já pago neste mês' : bills.length+' item'+(bills.length===1?'':'s')+' cadastrado'+(bills.length===1?'':'s'))}</div>
+    </div>`;
 
-  if(!bills.length){
-    html+=`<div class="empty"><b>Nenhuma conta cadastrada</b>Cadastre contas fixas como aluguel, luz, internet ou assinaturas para não esquecer nenhum vencimento.</div>`;
-  }else{
-    bills.forEach(b=>{
-      const st=billStatus(b);
-      const isPaid=st==='ok';
-      const label=st==='ok'?'Pago':st==='late'?'Vencida':'Em aberto';
-      html+=`<div class="bill ${isPaid?'paid':''}">
-        <button class="chk" data-paybill="${b.id}" aria-label="Marcar como pago">${isPaid?'✓':''}</button>
-        <div class="mid">
-          <div class="nm">${esc(b.name)}</div>
-          <div class="mt"><span class="pill ${st}">${label}</span> vence dia ${b.dueDay}${b.recurring?' · mensal':''}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="amt tnum">${fmt(b.amount)}</div>
-        </div>
-        <button class="edit" data-editbill="${b.id}" aria-label="Editar conta">✎</button>
-      </div>`;
-    });
-  }
+  html+=`<div class="sec-title">A receber <button id="addIn">Adicionar</button></div>`;
+  if(!ins.length){
+    html+=`<div class="empty" style="padding:24px 20px"><b>Nenhum recebimento fixo</b>Cadastre entradas que se repetem todo mês, como salário ou aluguel recebido.</div>`;
+  }else{ ins.forEach(b=>{ html+=billRow(b,ym,'in'); }); }
+
+  html+=`<div class="sec-title">A pagar <button id="addOut">Adicionar</button></div>`;
+  if(!outs.length){
+    html+=`<div class="empty" style="padding:24px 20px"><b>Nenhuma conta cadastrada</b>Cadastre contas fixas como aluguel, luz, internet ou assinaturas.</div>`;
+  }else{ outs.forEach(b=>{ html+=billRow(b,ym,'out'); }); }
+
   $('#scr-contas').innerHTML=html;
 }
 
 function renderAjustes(){
   const nTx=db.transactions.length, nBills=db.bills.length;
   let html=`
+    <div class="sec-title">Importar</div>
+    <div class="list">
+      <button class="item" id="faturaBtn"><div class="t">Importar fatura de cartão<small>Lê o PDF da fatura (XP ou Nubank) e lança as compras. Tudo no aparelho.</small></div><span class="chev">›</span></button>
+    </div>
     <div class="sec-title">Seus dados</div>
     <div class="list">
       <button class="item" id="exportBtn"><div class="t">Exportar backup<small>Salva um arquivo .json com tudo (${nTx} lançamentos, ${nBills} contas)</small></div><span class="chev">↓</span></button>
@@ -465,7 +499,8 @@ function renderAjustes(){
     <div class="list"><div class="item"><div class="t">Tema<small>Segue o modo claro ou escuro do iPhone</small></div></div></div>
     <div class="list"><button class="item danger" id="wipeBtn"><div class="t">Apagar todos os dados<small>Remove tudo deste aparelho. Não dá para desfazer.</small></div></button></div>
     <div class="foot">Minhas Finanças · versão 1.0<br>Todos os dados ficam salvos apenas neste iPhone. Nada é enviado para a internet.</div>
-    <input type="file" id="importFile" accept="application/json,.json" class="hidden">`;
+    <input type="file" id="importFile" accept="application/json,.json" class="hidden">
+    <input type="file" id="faturaFile" accept="application/pdf,.pdf" class="hidden">`;
   $('#scr-ajustes').innerHTML=html;
 }
 
@@ -550,32 +585,50 @@ function txSheet(existing){
 }
 
 /* ---------- BILL SHEET ---------- */
-function billSheet(existing){
+function billSheet(existing, defKind){
   const ed=existing||null;
-  const html=`
-    <div class="sh-head"><button id="shCancel">Cancelar</button><h2>${ed?'Editar conta':'Nova conta'}</h2><button id="shSave">Salvar</button></div>
+  let kind=ed?(ed.kind||'out'):(defKind||'out');
+  const isIn=()=>kind==='in';
+  openSheet(`
+    <div class="sh-head"><button id="shCancel">Cancelar</button><h2 id="shTitle"></h2><button id="shSave">Salvar</button></div>
     <div class="body">
-      <div class="field"><label>Nome da conta</label><input type="text" id="bName" placeholder="Ex: Aluguel, Luz, Internet" value="${ed?esc(ed.name):''}" maxlength="40"></div>
+      <div class="seg" id="kindSeg">
+        <button data-v="out">A pagar</button>
+        <button data-v="in">A receber</button>
+      </div>
+      <div class="field"><label id="lblName"></label><input type="text" id="bName" value="${ed?esc(ed.name):''}" maxlength="40"></div>
       <div class="field"><label>Valor</label><input type="text" id="bAmt" placeholder="0,00" inputmode="numeric"></div>
-      <div class="field"><label>Dia do vencimento</label><input type="number" id="bDay" min="1" max="31" placeholder="Ex: 10" value="${ed?ed.dueDay:''}"></div>
+      <div class="field"><label id="lblDay"></label><input type="number" id="bDay" min="1" max="31" value="${ed?ed.dueDay:''}"></div>
       <div class="field"><label style="text-transform:none;letter-spacing:0;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;"><input type="checkbox" id="bRec" ${(!ed||ed.recurring)?'checked':''} style="width:20px;height:20px;"> Repete todo mês</label></div>
-      ${ed?'<button class="btn ghost" id="delBtn">Excluir conta</button>':''}
-    </div>`;
-  openSheet(html);
+      ${ed?`<button class="btn ghost" id="delBtn"></button>`:''}
+    </div>`);
+  const nameIn=sheetContent.querySelector('#bName'), dayIn=sheetContent.querySelector('#bDay');
+  function paintLabels(){
+    const i=isIn();
+    sheetContent.querySelector('#shTitle').textContent=(ed?'Editar ':'Nov'+(i?'o ':'a '))+(i?'recebimento':'conta');
+    sheetContent.querySelector('#lblName').textContent=i?'Nome do recebimento':'Nome da conta';
+    nameIn.placeholder=i?'Ex: Salário, Comissão':'Ex: Aluguel, Luz, Internet';
+    sheetContent.querySelector('#lblDay').textContent=i?'Dia do recebimento':'Dia do vencimento';
+    dayIn.placeholder=i?'Ex: 5':'Ex: 10';
+    const del=sheetContent.querySelector('#delBtn'); if(del) del.textContent=i?'Excluir recebimento':'Excluir conta';
+    sheetContent.querySelectorAll('#kindSeg button').forEach(b=>b.classList.toggle('on',b.dataset.v===kind));
+  }
+  paintLabels();
   const getAmt=bindMoney(sheetContent.querySelector('#bAmt'), ed?ed.amount:0);
+  sheetContent.querySelector('#kindSeg').addEventListener('click',e=>{const b=e.target.closest('[data-v]'); if(!b)return; kind=b.dataset.v; paintLabels();});
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
   if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{
-    if(confirm('Excluir esta conta?')){ db.bills=db.bills.filter(b=>b.id!==ed.id); save(); closeSheet(); renderAll(); }
+    if(confirm('Excluir este item?')){ db.bills=db.bills.filter(b=>b.id!==ed.id); db.transactions=db.transactions.filter(t=>t._bill!==ed.id); save(); closeSheet(); renderAll(); }
   });
   sheetContent.querySelector('#shSave').addEventListener('click',()=>{
-    const name=sheetContent.querySelector('#bName').value.trim();
+    const name=nameIn.value.trim();
     const amount=getAmt();
-    const dueDay=Math.min(31,Math.max(1,parseInt(sheetContent.querySelector('#bDay').value||'1',10)));
+    const dueDay=Math.min(31,Math.max(1,parseInt(dayIn.value||'1',10)));
     const recurring=sheetContent.querySelector('#bRec').checked;
-    if(!name){ alert('Dê um nome para a conta.'); return; }
+    if(!name){ alert('Dê um nome.'); return; }
     if(!amount){ alert('Informe o valor.'); return; }
-    if(ed){ Object.assign(ed,{name,amount,dueDay,recurring}); }
-    else{ db.bills.push({id:uid(),name,amount,dueDay,recurring,paidMonths:[]}); }
+    if(ed){ Object.assign(ed,{name,amount,dueDay,recurring,kind}); }
+    else{ db.bills.push({id:uid(),name,amount,dueDay,recurring,kind,paidMonths:[]}); }
     save(); closeSheet(); renderAll();
   });
 }
@@ -585,15 +638,19 @@ function toggleBillPaid(id){
   const ym=ymOf();
   b.paidMonths=b.paidMonths||[];
   const i=b.paidMonths.indexOf(ym);
+  const kind=b.kind||'out';
   if(i>=0){
     b.paidMonths.splice(i,1);
-    // remove linked transaction
     db.transactions=db.transactions.filter(t=>!(t._bill===b.id && t.date.slice(0,7)===ym));
   }else{
     b.paidMonths.push(ym);
-    // log as expense on due day of this month
-    const date=ymOf()+'-'+String(Math.min(b.dueDay,28)).padStart(2,'0');
-    db.transactions.push({id:uid(),type:'expense',amount:b.amount,categoryId:'c_home',date,note:b.name,_bill:b.id,_o:Date.now()});
+    const date=ym+'-'+String(Math.min(b.dueDay,28)).padStart(2,'0');
+    if(kind==='in'){
+      const cid=catById('c_salary')?'c_salary':(db.categories.find(c=>c.type==='income')||{}).id;
+      db.transactions.push({id:uid(),type:'income',amount:b.amount,categoryId:cid,date,note:b.name,_bill:b.id,_o:Date.now()});
+    }else{
+      db.transactions.push({id:uid(),type:'expense',amount:b.amount,categoryId:'c_home',date,note:b.name,_bill:b.id,_o:Date.now()});
+    }
   }
   save(); renderAll();
 }
@@ -661,6 +718,214 @@ function catSheet(){
   render();
 }
 
+/* ================= LEITOR DE FATURA (XP + Nubank, 100% offline) ================= */
+const MAPA_CATEGORIAS={
+  "Restaurante":["restaurante","lanchonete","pizzaria","burger","sushi","habib","mcdonalds","mc donalds","subway","ifood","rappi","uber eats","ubereats","domino","churrascaria","padaria","cafe ","coffee","espetinho","temakeria","boteco","confeitaria","sorveteria","acai","cozinha","bistro","barzinho","choperia","ifd*","kee*","keetabr","ze delivery","rosticceria","rotisserie","magnifico carnes","carnes ","machado alimentos","bacio di latte","baciodilatte","vila das fru"],
+  "Alimentação":["supermercado","mercado","hipermercado","atacadao","carrefour","extra ","pao de acucar","pao de acuca","assai","hortifruti","feira","acougue","walmart","bistek","varejao","minimercado","sacolao","emporio","mercearia","zona sul","mundial","prezunic","guanabara","mambo","santa luzia","ninki","g garrafeira","garrafeira","dona deola","henrique sch"],
+  "Farmácia":["farmacia","drogaria","drogasil","raia","pacheco","ultrafarma","panvel","nissei","drogaraia","drogarias","droga"],
+  "Médico/Dentista":["clinica","medico","hospital","laboratorio","exame","consulta","dentista","odonto","saude ","unimed","amil","sulamerica saude","hapvida","notredame","psicolog","terapia","fisioterapia","oftalmolog","dermatolog","nutricionist","dasa","fleury"],
+  "Combustível":["posto ","shell","petrobras","ipiranga","posto ale","ale combustiveis","raizen","br distribuidora","combustivel","etanol","gasolina","posto de","posto ortega"],
+  "Transporte":["uber","99pop","cabify","taxi","onibus","metro ","estacionamento","parking","autobus","bilhete unico","bom bilhete","99taxi","99 - nupay","nupay","easyjet mobilidade","easyjet","autopass","conect"],
+  "Manutenção Veículos":["oficina","mecanica","borracharia","lavagem","auto center","autopecas","auto pecas","lubrifil","revisao veiculo","pneu","carrera"],
+  "Assinaturas":["netflix","spotify","amazon prime","disney","hbo","globoplay","youtube premium","apple.com","microsoft","adobe","canva","dropbox","google one","icloud","deezer","crunchyroll","max ","paramount","mubi","twitch","amazon.com","apple store","vivo sp"],
+  "TV/Internet":["claro net","net combo","net virtua","net fone","vivo fibra","oi fibra","tim fibra","internet ","banda larga","sky ","directv","telecomunicacoes","enel distribuicao","enel "],
+  "Telefone":["vivo ","tim ","claro ","oi ","nextel"],
+  "Esportes/Hobbies":["academia","smartfit","bluefit","bodytech","crossfit","decathlon","centauro","natacao","musculacao","pilates","beach tennis","padel","spinning","totalpass","bravest"],
+  "Viagens":["hotel","airbnb","booking","decolar","latam","gol ","azul ","airline","hospedagem","pousada","resort","trivago","123milhas","max milhas","rodoviaria","passagem","buser"],
+  "Clube":["clube ","country ","aabb","yacht"],
+  "Cuidados com a Beleza":["salao","barbearia","estetica","manicure","cabeleireiro","nail ","beauty","spa ","depilacao","bronzeamento","galvani cosm","beleza na web","avatim"],
+  "Pet":["pet shop","petshop","veterinario","banho e tosa","petz","cobasi","petland"],
+  "Educação":["escola","colegio","faculdade","universidade","curso","idioma","wizard","ccaa","cultura inglesa","livraria","amazon kindle","livro","pontificia universidad","pontificia","sociedade mineira de cultura","kiwify","rei treinament","fabricademil","fabrica de mil","kalunga","papelaria"],
+  "Empregados":["diarista","empregada","faxineira","cuidador","baba","omolavanderia","lavanderia","smart home comercio"]
+};
+// categoria do parser -> categoria do app
+const MAP_TO_APP={"Restaurante":"c_food","Alimentação":"c_market","Farmácia":"c_health","Médico/Dentista":"c_health","Combustível":"c_transp","Transporte":"c_transp","Manutenção Veículos":"c_transp","Assinaturas":"c_sub","TV/Internet":"c_sub","Telefone":"c_sub","Esportes/Hobbies":"c_fun","Viagens":"c_fun","Clube":"c_fun","Cuidados com a Beleza":"c_other","Pet":"c_other","Educação":"c_edu","Empregados":"c_home","Diversas":"c_other","A Classificar":"c_other"};
+const SKIP_KEYWORDS=["total desta fatura","total da fatura","total fatura","subtotal","pagamento efetuado","pagamento em ","saldo anterior","credito disponivel","limite de credito","vencimento","valor minimo","valor total","encargos","juros","iof","multa","fatura anterior","saldo devedor","= total","total ="];
+function NORM(s){return (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
+function deveIgnorar(desc){const d=NORM(desc); return SKIP_KEYWORDS.some(k=>d.includes(NORM(k)));}
+function catFatura(desc){const d=NORM(desc); for(const cat in MAPA_CATEGORIAS){for(const kw of MAPA_CATEGORIAS[cat]){if(d.includes(NORM(kw))) return cat;}} return 'A Classificar';}
+function appCatFor(desc){const id=MAP_TO_APP[catFatura(desc)]||'c_other'; return catById(id)?id:(db.categories.find(c=>c.type==='expense')||{}).id;}
+function parseValorCents(s){
+  if(!s) return null;
+  s=s.replace(/[R$\s]/g,'').trim();
+  let v=null;
+  if(/^\d{1,3}(\.\d{3})*,\d{2}$/.test(s)) v=parseFloat(s.replace(/\./g,'').replace(',','.'));
+  else if(/^\d+,\d{2}$/.test(s)) v=parseFloat(s.replace(',','.'));
+  else return null;
+  if(isNaN(v)||v===0) return null;
+  return Math.round(v*100);
+}
+function nomeLimpo(desc){
+  let d=desc.replace(/\s*-?\s*parcela\s+\d+\/\d+\s*$/i,'');
+  d=d.replace(/\b\d{1,2}\/\d{2,3}\b/g,'').replace(/\b\d{6,}\b/g,'').replace(/\s+[A-Z]{2}\s*$/,'').trim();
+  const p=d.split(/\s+/).filter(x=>x.length>1 && x!=='-');
+  const s=p.slice(0,5).join(' ').trim();
+  return s? s.replace(/\S+/g,t=>t.charAt(0).toUpperCase()+t.slice(1).toLowerCase()) : desc.slice(0,40);
+}
+function detectBank(t){
+  t=NORM(t);
+  if(t.includes('nubank')||t.includes('nu pagamentos')) return 'nubank';
+  if(t.includes('xp investimentos')||t.includes('xp cartao')||t.includes('xp credito')||t.includes('banco xp')||t.includes('cartao xp')) return 'xp';
+  if(t.includes('itau')) return 'itau';
+  if(t.includes('bradesco')) return 'bradesco';
+  if(t.includes('santander')) return 'santander';
+  return 'generico';
+}
+const MESES_NU={jan:'01',fev:'02',mar:'03',abr:'04',mai:'05',jun:'06',jul:'07',ago:'08',set:'09',out:'10',nov:'11',dez:'12'};
+function inferYear(mm){ // mm '01'..'12' sem ano -> ano de referência
+  const m=parseInt(mm,10), tM=now.getMonth()+1, tY=now.getFullYear();
+  return m>tM+1 ? tY-1 : tY;
+}
+function parcelaTag(desc){const m=desc.match(/parcela\s+(\d+)\/(\d+)/i)||desc.match(/\b(\d{1,2})\/(\d{2,3})\b/); return m?`${m[1]}/${m[2]}`:'';}
+
+function parseNubank(lines){
+  const re=/^(\d{2})\s+(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\b(.+?)\s+R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/i;
+  const STOP=["pagamentos e financiamentos","proximas faturas","resumo da fatura","alternativas de pagamento","encargos e custo efetivo"];
+  const SKIP=["transacoes de","pagamento em","estorno de","credito de rotativo","saldo em rotativo","juros de rotativo","iof de rotativo","encerramento de divida","parcelamento de fatura","total a pagar","fatura anterior","saldo financiado","outros lancamentos"];
+  const out=[]; let stop=false;
+  for(const raw of lines){
+    const linha=raw.trim(); const ln=NORM(linha);
+    if(STOP.some(s=>ln.includes(s))){stop=true; continue;}
+    if(stop||!linha) continue;
+    if(SKIP.some(s=>ln.includes(s))) continue;
+    if(/[−–—]/.test(linha) || /-\s*R\$/.test(linha)) continue;
+    const m=linha.match(re); if(!m) continue;
+    const dia=m[1], mes=MESES_NU[m[2].toLowerCase()]||'01';
+    const cents=parseValorCents(m[4]); if(!cents) continue;
+    let desc=m[3].trim();
+    desc=desc.replace(/^[•·•]+\s*\d{4}\s+/,'').replace(/^\d{4}\s+(?=\S)/,'').replace(/^nu\b\s*/i,'').replace(/^[•·•]+\s*/,'').trim();
+    if(desc.length>1 && !deveIgnorar(desc)){
+      const y=inferYear(mes);
+      out.push({date:`${y}-${mes}-${dia}`,desc,cents});
+    }
+  }
+  return out;
+}
+function parseXP(lines){
+  const re=/^(\d{2}\/\d{2}\/\d{2,4})\s+(.+?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s+0,00\s*$/;
+  const STOP=["encargos da fatura","demais cobrancas","parcelamento de fatura"];
+  const IGN=["subtotal","total","data","descricao","pagamentos validos","saldo financiado","fatura anterior"];
+  const out=[]; let stop=false;
+  for(const raw of lines){
+    const linha=raw.trim(); const ln=NORM(linha);
+    if(STOP.some(s=>ln.includes(s))) stop=true;
+    if(stop) continue;
+    const m=linha.match(re); if(!m) continue;
+    const cents=parseValorCents(m[3]); if(!cents||cents<=0) continue;
+    const desc=m[2].trim();
+    if(IGN.some(k=>NORM(desc).includes(k))) continue;
+    const p=m[1].split('/'); const y=p[2].length===2?('20'+p[2]):p[2];
+    out.push({date:`${y}-${p[1]}-${p[0]}`,desc,cents});
+  }
+  return out;
+}
+function parseGenerico(lines){
+  const re=/^(\d{2})\/(\d{2})(?:\/(\d{2,4}))?\s+(.{3,60}?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
+  const out=[];
+  for(const raw of lines){
+    const linha=raw.trim(); if(!linha||deveIgnorar(linha)) continue;
+    const m=linha.match(re); if(!m) continue;
+    const cents=parseValorCents(m[5]); if(!cents) continue;
+    const dd=m[1],mm=m[2]; const y=m[3]?(m[3].length===2?'20'+m[3]:m[3]):String(inferYear(mm));
+    out.push({date:`${y}-${mm}-${dd}`,desc:m[4].trim(),cents});
+  }
+  return out;
+}
+
+async function extractLines(file){
+  const pdfjs=await import('./vendor/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc='./vendor/pdf.worker.min.mjs';
+  const buf=await file.arrayBuffer();
+  const doc=await pdfjs.getDocument({data:buf}).promise;
+  const lines=[];
+  for(let p=1;p<=doc.numPages;p++){
+    const page=await doc.getPage(p);
+    const tc=await page.getTextContent();
+    const rows={};
+    tc.items.forEach(it=>{ if(it.str===undefined) return; const y=Math.round(it.transform[5]); (rows[y]=rows[y]||[]).push(it); });
+    Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(y=>{
+      const items=rows[y].sort((a,b)=>a.transform[4]-b.transform[4]);
+      let line='',prevEnd=null;
+      items.forEach(it=>{ const x=it.transform[4]; if(prevEnd!==null && x-prevEnd>1.5) line+=' '; line+=it.str; prevEnd=x+(it.width||0); });
+      lines.push(line.replace(/\s+/g,' ').trim());
+    });
+  }
+  return lines;
+}
+
+async function importFatura(file){
+  openSheet(`<div class="sh-head"><button id="shCancel">Cancelar</button><h2>Lendo fatura</h2><span></span></div><div class="body"><div class="imp-loading"><div class="spin"></div><div>Lendo o PDF no seu aparelho...<br><span style="font-size:12px;opacity:.8">Nada é enviado para a internet.</span></div></div></div>`);
+  sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  try{
+    const lines=await extractLines(file);
+    const banco=detectBank(lines.join('\n'));
+    let raw = banco==='nubank'?parseNubank(lines) : banco==='xp'?parseXP(lines) : parseGenerico(lines);
+    if(!raw.length && banco!=='generico') raw=parseGenerico(lines);
+    const items=raw.map(t=>({date:t.date, name:nomeLimpo(t.desc), rawDesc:t.desc, cents:t.cents, cat:appCatFor(t.desc), parc:parcelaTag(t.desc), on:true}));
+    reviewFatura(banco, items);
+  }catch(e){
+    openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Não deu certo</h2><span></span></div><div class="body"><p style="color:var(--muted);font-size:14px">Não consegui ler esse PDF. Pode ser uma fatura protegida por senha ou digitalizada como imagem. Tente o PDF original do banco (XP ou Nubank).</p><p style="color:var(--muted);font-size:12px">Detalhe técnico: ${esc(String(e.message||e))}</p></div>`);
+    sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  }
+}
+
+const BANK_LABEL={nubank:'Nubank',xp:'XP',itau:'Itaú',bradesco:'Bradesco',santander:'Santander',generico:'cartão'};
+function reviewFatura(banco, items){
+  if(!items.length){
+    openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Fatura vazia</h2><span></span></div><div class="body"><p style="color:var(--muted);font-size:14px">Não encontrei compras nessa fatura. Se ela é da XP ou do Nubank e mesmo assim não leu, me manda esse PDF que eu ajusto o leitor.</p></div>`);
+    sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet); return;
+  }
+  const expCats=db.categories.filter(c=>c.type==='expense');
+  const draw=()=>{
+    const on=items.filter(i=>i.on);
+    const total=on.reduce((s,i)=>s+i.cents,0);
+    const rows=items.map((i,idx)=>`
+      <div class="imp-row ${i.on?'on':'off'}" data-i="${idx}">
+        <button class="cb" data-toggle="${idx}" aria-label="Incluir">${i.on?'✓':''}</button>
+        <div class="mid">
+          <div class="nm">${esc(i.name)} ${i.parc?`<span class="tag-parc">${i.parc}</span>`:''}</div>
+          <div class="sub">
+            <span class="dt">${dayLabel(i.date)}</span>
+            <select data-cat="${idx}">${expCats.map(c=>`<option value="${c.id}" ${c.id===i.cat?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="amt tnum">${fmt(i.cents)}</div>
+      </div>`).join('');
+    openSheet(`
+      <div class="sh-head"><button id="shCancel">Cancelar</button><h2>Revisar fatura</h2><span></span></div>
+      <div class="body">
+        <div class="imp-summary"><div class="b">Fatura ${esc(BANK_LABEL[banco]||'cartão')}</div><div class="t tnum">${fmt(total)}</div></div>
+        <div class="imp-tools"><button id="selAll">Todas</button><button id="selNone">Nenhuma</button><span class="count">${on.length} de ${items.length}</span></div>
+        ${rows}
+        <button class="btn" id="impDo" style="margin-top:16px">Adicionar ${on.length} lançamento${on.length===1?'':'s'}</button>
+        <p style="color:var(--muted);font-size:11.5px;text-align:center;margin-top:10px">Lançamentos repetidos (mesma data, valor e nome) são ignorados automaticamente.</p>
+      </div>`);
+    sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+    sheetContent.querySelector('#selAll').addEventListener('click',()=>{items.forEach(i=>i.on=true);draw();});
+    sheetContent.querySelector('#selNone').addEventListener('click',()=>{items.forEach(i=>i.on=false);draw();});
+    sheetContent.querySelectorAll('[data-toggle]').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.toggle; items[i].on=!items[i].on; draw();}));
+    sheetContent.querySelectorAll('[data-cat]').forEach(s=>s.addEventListener('change',()=>{items[+s.dataset.cat].cat=s.value;}));
+    sheetContent.querySelector('#impDo').addEventListener('click',()=>{
+      const chosen=items.filter(i=>i.on);
+      if(!chosen.length){ alert('Selecione ao menos um lançamento.'); return; }
+      const existing=new Set(db.transactions.map(t=>t.date+'|'+t.amount+'|'+NORM(t.note||'').slice(0,20)));
+      let add=0, dup=0, lastDate=null;
+      chosen.forEach(i=>{
+        const key=i.date+'|'+i.cents+'|'+NORM(i.name).slice(0,20);
+        if(existing.has(key)){ dup++; return; }
+        existing.add(key);
+        db.transactions.push({id:uid(),type:'expense',amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_fatura:banco});
+        add++; lastDate=i.date;
+      });
+      save(); closeSheet();
+      if(lastDate){ const [Y,M]=lastDate.split('-').map(Number); curY=Y; curM=M-1; }
+      renderAll();
+      alert(add+' lançamento'+(add===1?'':'s')+' adicionado'+(add===1?'':'s')+(dup?'. '+dup+' já existia'+(dup===1?'':'m')+' e foram ignorados.':'.'));
+    });
+  };
+  draw();
+}
+
 /* ---------- BACKUP ---------- */
 async function exportBackup(){
   const data=JSON.stringify(db,null,2);
@@ -709,15 +974,18 @@ $('#app').addEventListener('click',e=>{
   const tx=e.target.closest('[data-tx]'); if(tx){ const t=db.transactions.find(x=>x.id===tx.dataset.tx); if(t) txSheet(t); return; }
   const pb=e.target.closest('[data-paybill]'); if(pb){ toggleBillPaid(pb.dataset.paybill); return; }
   const eb=e.target.closest('[data-editbill]'); if(eb){ const b=db.bills.find(x=>x.id===eb.dataset.editbill); if(b) billSheet(b); return; }
-  if(e.target.closest('#addBill')){ billSheet(null); return; }
+  if(e.target.closest('#addIn')){ billSheet(null,'in'); return; }
+  if(e.target.closest('#addOut')){ billSheet(null,'out'); return; }
   if(e.target.closest('#editBud')){ budgetSheet(); return; }
   if(e.target.closest('#exportBtn')){ exportBackup(); return; }
   if(e.target.closest('#importBtn')){ $('#importFile').click(); return; }
+  if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
   if(e.target.closest('#wipeBtn')){ if(confirm('Apagar TODOS os dados deste aparelho? Não dá para desfazer.')){ if(confirm('Tem certeza mesmo? Considere exportar um backup antes.')){ db=defaults(); save(); renderAll(); } } return; }
 });
 $('#app').addEventListener('change',e=>{
   if(e.target.id==='importFile' && e.target.files[0]){ importBackup(e.target.files[0]); e.target.value=''; }
+  if(e.target.id==='faturaFile' && e.target.files[0]){ importFatura(e.target.files[0]); e.target.value=''; }
 });
 
 renderAll();

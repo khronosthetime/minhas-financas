@@ -10,3 +10,6 @@ artifact_body.html
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Faturas de teste sinteticas (nao versionar)
+test/
