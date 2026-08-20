@@ -243,6 +243,24 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .imp-row .amt{font-size:14px; font-weight:700; text-align:right; white-space:nowrap;}
 .tag-parc{font-size:9.5px; font-weight:700; color:var(--muted); border:.8px solid var(--border); border-radius:999px; padding:1px 6px;}
 
+/* Tela de bloqueio */
+#lockScreen{position:fixed; inset:0; z-index:100; background:var(--bg); display:flex; align-items:center; justify-content:center; padding:calc(var(--safe-top) + 20px) 24px calc(var(--safe-bot) + 20px);}
+.lock-inner{width:100%; max-width:300px; text-align:center;}
+.lock-mark{width:52px; height:52px; border-radius:15px; background:var(--brand); color:var(--on-brand); display:grid; place-items:center; margin:0 auto 16px; font-size:22px;}
+.lock-title{font-size:18px; font-weight:700;}
+.lock-sub{font-size:13px; color:var(--muted); margin-top:6px;}
+.lock-dots{display:flex; gap:18px; justify-content:center; margin:28px 0 34px;}
+.lock-dots i{width:14px; height:14px; border-radius:50%; border:1.4px solid var(--muted); transition:background .1s;}
+.lock-dots i.on{background:var(--brand); border-color:var(--brand);}
+.lock-dots.err i{border-color:var(--neg);}
+@keyframes shk{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}30%,50%,70%{transform:translateX(-8px)}40%,60%{transform:translateX(8px)}}
+.lock-dots.err{animation:shk .4s;}
+.keypad{display:grid; grid-template-columns:repeat(3,1fr); gap:16px; max-width:280px; margin:0 auto;}
+.keypad button{width:66px; height:66px; justify-self:center; border-radius:50%; background:var(--surface); border:.8px solid var(--border); color:var(--text); font-size:24px; font-weight:600;}
+.keypad button:active{background:var(--surface-2);}
+.keypad .k-face,.keypad .k-del{background:none; border:none; color:var(--brand); font-size:15px; font-weight:600;}
+.keypad .k-blank{visibility:hidden;}
+
 .hidden{display:none!important;}
 </style>
 
@@ -288,6 +306,16 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 
 <div class="sheet-bg" id="sheetBg"></div>
 <div class="sheet" id="sheet"><div class="grip"></div><div id="sheetContent"></div></div>
+
+<div id="lockScreen" class="hidden">
+  <div class="lock-inner">
+    <div class="lock-mark">🔒</div>
+    <div class="lock-title">Minhas Finanças</div>
+    <div class="lock-sub" id="lockSub">Digite seu PIN</div>
+    <div class="lock-dots" id="lockDots"><i></i><i></i><i></i><i></i></div>
+    <div class="keypad" id="keypad"></div>
+  </div>
+</div>
 
 <script>
 (function(){
@@ -525,6 +553,8 @@ function renderAjustes(){
   const notifTxt = np==='granted' ? 'Ativado. Você recebe um aviso ao cruzar cada faixa.' : np==='denied' ? 'Bloqueado nos ajustes do iPhone. O aviso ainda aparece dentro do app.' : np==='unsupported' ? 'Este navegador não suporta. O aviso aparece dentro do app.' : 'Toque para permitir. O aviso também aparece dentro do app.';
   const pushOn=!!(db.settings&&db.settings.pushOn);
   const pushTxt = pushOn ? 'Ativado. Alerta chega no celular mesmo com o app fechado.' : 'Toque para ativar (precisa do servidor na nuvem).';
+  const lockOn=!!(db.settings&&db.settings.pinHash);
+  const lockTxt = lockOn ? ('PIN ativado'+(db.settings.faceCred?' + Face ID':'')+'. Pede ao abrir o app.') : 'Proteja o app com um PIN de 4 dígitos (e Face ID).';
   let html=`
     <div class="sec-title">Importar</div>
     <div class="list">
@@ -543,6 +573,8 @@ function renderAjustes(){
       <button class="item" id="notifBtn"><div class="t">Avisar em 50%, 75% e 100%<small>${notifTxt}</small></div><span class="chev">›</span></button>
       <button class="item" id="pushBtn"><div class="t">Alertas com o app fechado<small>${pushTxt}</small></div><span class="chev">›</span></button>
     </div>
+    <div class="sec-title">Segurança</div>
+    <div class="list"><button class="item" id="lockBtn"><div class="t">Bloqueio do app<small>${lockTxt}</small></div><span class="chev">›</span></button></div>
     <div class="sec-title">Aparência</div>
     <div class="list"><div class="item"><div class="t">Tema<small>Escuro fixo, no estilo Kalshi/Pierre</small></div></div></div>
     <div class="list"><button class="item danger" id="wipeBtn"><div class="t">Apagar todos os dados<small>Remove tudo deste aparelho. Não dá para desfazer.</small></div></button></div>
@@ -812,6 +844,37 @@ async function enablePush(){
     toast(ok?'Alertas com o app fechado ativados.':'Ativado no app, mas o servidor não respondeu. Confira o endereço.');
   }catch(e){ toast('Não deu pra ativar: '+(e.message||e)); }
   renderAll();
+}
+
+/* ---------- BLOQUEIO (PIN / Face ID) ---------- */
+async function sha256(s){ const b=await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fin:'+s)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+let lockBuf='';
+function paintDots(err){ const dots=$('#lockDots'); dots.classList.toggle('err',!!err); [...dots.children].forEach((d,i)=>d.classList.toggle('on', i<lockBuf.length)); }
+function buildKeypad(){
+  const face=(db.settings&&db.settings.faceCred)?`<button class="k-face" data-k="face">Face ID</button>`:`<span class="k-blank"></span>`;
+  const cells=['1','2','3','4','5','6','7','8','9',face,'0',`<button class="k-del" data-k="del">⌫</button>`];
+  $('#keypad').innerHTML=cells.map(c=>/^\d$/.test(c)?`<button data-k="${c}">${c}</button>`:c).join('');
+}
+function showLock(){ buildKeypad(); lockBuf=''; paintDots(); $('#lockSub').textContent=(db.settings&&db.settings.faceCred)?'Digite o PIN ou use o Face ID':'Digite seu PIN'; $('#lockScreen').classList.remove('hidden'); if(db.settings&&db.settings.faceCred) setTimeout(faceUnlock,400); }
+function unlockApp(){ $('#lockScreen').classList.add('hidden'); }
+async function pinDigit(d){ if(lockBuf.length>=4) return; lockBuf+=d; paintDots(); if(lockBuf.length===4){ const h=await sha256(lockBuf); if(h===(db.settings||{}).pinHash){ unlockApp(); } else { paintDots(true); setTimeout(()=>{ lockBuf=''; paintDots(); },450); } } }
+function bufB64u(buf){ const a=new Uint8Array(buf); let s=''; a.forEach(b=>s+=String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64uBuf(s){ s=s.replace(/-/g,'+').replace(/_/g,'/'); const pad='='.repeat((4-s.length%4)%4); const r=atob(s+pad); const a=new Uint8Array(r.length); for(let i=0;i<r.length;i++)a[i]=r.charCodeAt(i); return a.buffer; }
+async function faceRegister(){
+  if(!window.PublicKeyCredential){ toast('Face ID não suportado neste aparelho.'); return false; }
+  try{ const c=await navigator.credentials.create({publicKey:{ challenge:crypto.getRandomValues(new Uint8Array(16)), rp:{name:'Minhas Finanças'}, user:{id:crypto.getRandomValues(new Uint8Array(8)),name:'gabriel',displayName:'Gabriel'}, pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}], authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required'}, timeout:60000 }});
+    db.settings=db.settings||{}; db.settings.faceCred=bufB64u(c.rawId); save(); return true;
+  }catch(e){ toast('Não deu pra ativar o Face ID.'); return false; }
+}
+async function faceUnlock(){ const s=db.settings||{}; if(!s.faceCred) return; try{ await navigator.credentials.get({publicKey:{ challenge:crypto.getRandomValues(new Uint8Array(16)), allowCredentials:[{type:'public-key',id:b64uBuf(s.faceCred)}], userVerification:'required', timeout:60000 }}); unlockApp(); }catch(e){} }
+function lockSheet(){
+  const s=db.settings||{}; const on=!!s.pinHash;
+  openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Bloqueio do app</h2><span></span></div><div class="body">${on?`<p style="color:var(--muted);font-size:13.5px;margin:0 0 18px">O app pede o PIN sempre que abrir. Seus dados continuam só neste aparelho.</p><div class="field" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px"><label style="text-transform:none;letter-spacing:0;font-size:14.5px;font-weight:600;margin:0">Desbloquear com Face ID</label><input type="checkbox" id="faceTgl" ${s.faceCred?'checked':''} style="width:22px;height:22px"></div><button class="btn sec" id="changePin">Trocar PIN</button><button class="btn ghost" id="removePin">Desativar bloqueio</button>`:`<p style="color:var(--muted);font-size:13.5px;margin:0 0 18px">Crie um PIN de 4 dígitos. O app pede ele ao abrir. Fica só neste aparelho, nunca vai pra internet.</p><div class="field"><label>Novo PIN (4 dígitos)</label><input type="password" id="newPin" inputmode="numeric" maxlength="4" placeholder="••••" style="letter-spacing:10px;text-align:center;font-size:22px"></div><button class="btn" id="savePin">Ativar bloqueio</button>`}</div>`);
+  sheetContent.querySelector('#shCancel').addEventListener('click',()=>{closeSheet();renderAll();});
+  const sp=sheetContent.querySelector('#savePin'); if(sp) sp.addEventListener('click',async()=>{ const v=sheetContent.querySelector('#newPin').value; if(!/^\d{4}$/.test(v)){ alert('Digite 4 números.'); return; } db.settings=db.settings||{}; db.settings.pinHash=await sha256(v); save(); closeSheet(); toast('Bloqueio ativado. Vai pedir o PIN na próxima vez que abrir.'); renderAll(); });
+  const cp=sheetContent.querySelector('#changePin'); if(cp) cp.addEventListener('click',()=>{ db.settings.pinHash=null; save(); lockSheet(); });
+  const rp2=sheetContent.querySelector('#removePin'); if(rp2) rp2.addEventListener('click',()=>{ if(confirm('Desativar o bloqueio do app?')){ db.settings.pinHash=null; db.settings.faceCred=null; save(); closeSheet(); renderAll(); } });
+  const ft=sheetContent.querySelector('#faceTgl'); if(ft) ft.addEventListener('change',async()=>{ if(ft.checked){ const ok=await faceRegister(); if(!ok) ft.checked=false; else toast('Face ID ativado.'); } else { db.settings.faceCred=null; save(); } });
 }
 
 /* ---------- SHEET ---------- */
@@ -1395,6 +1458,7 @@ $('#nextM').addEventListener('click',()=>{ curM++; if(curM>11){curM=0;curY++;} h
 $('#fab').addEventListener('click',()=>txSheet(null));
 $('#chatSend').addEventListener('click',chatSend);
 $('#chatIn').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); chatSend(); } });
+$('#keypad').addEventListener('click',e=>{ const b=e.target.closest('[data-k]'); if(!b) return; const k=b.dataset.k; if(k==='del'){ lockBuf=lockBuf.slice(0,-1); paintDots(); } else if(k==='face'){ faceUnlock(); } else pinDigit(k); });
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   activeTab=t.dataset.tab;
@@ -1424,6 +1488,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#extratoBtn')){ $('#extratoFile').click(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
+  if(e.target.closest('#lockBtn')){ lockSheet(); return; }
   if(e.target.closest('#notifBtn')){ if('Notification' in window){ Notification.requestPermission().then(p=>{ if(p==='granted') toast('Alertas ativados no celular.'); renderAll(); }); } else { toast('Este navegador não suporta notificações.'); } return; }
   if(e.target.closest('#pushBtn')){ enablePush(); return; }
   if(e.target.closest('#wipeBtn')){ if(confirm('Apagar TODOS os dados deste aparelho? Não dá para desfazer.')){ if(confirm('Tem certeza mesmo? Considere exportar um backup antes.')){ db=defaults(); save(); renderAll(); } } return; }
@@ -1435,6 +1500,7 @@ $('#app').addEventListener('change',e=>{
 });
 
 renderAll();
+if(db.settings && db.settings.pinHash) showLock();
 })();
 </script>
 <!--ARTIFACT_END-->
