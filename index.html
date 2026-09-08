@@ -787,7 +787,7 @@ function chatSend(){
     const r='Não peguei o valor. Tente algo como "gastei 50 no almoço", "uber 25" ou "recebi 3000 de salário".';
     db.chat.push({role:'bot',text:r}); appendMsg('bot',r);
   }else{
-    const tx={id:uid(),type:p.type,amount:p.cents,categoryId:p.catId,date:p.date,note:p.name,_o:Date.now(),_chat:1};
+    const tx={id:uid(),type:p.type,amount:p.cents,categoryId:p.catId,date:p.date,note:p.name,_o:Date.now(),_m:Date.now(),_chat:1};
     db.transactions.push(tx);
     const c=catById(p.catId)||{name:'Outros'};
     const quando = p.date!==localDate(now)? ' · '+dayLabel(p.date) : '';
@@ -1041,7 +1041,14 @@ function cloudReplace(doc){ // servidor autoritativo (pull mais novo)
 function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adicionado offline
   if(!doc||typeof doc!=='object') return;
   ['transactions','bills','patrimonio'].forEach(k=>{ if(!Array.isArray(doc[k])) return;
-    const by={}; (doc[k]||[]).forEach(it=>{ if(it&&it.id) by[it.id]=it; }); (db[k]||[]).forEach(it=>{ if(it&&it.id) by[it.id]=it; }); db[k]=Object.values(by); });
+    const by={};
+    (doc[k]||[]).forEach(it=>{ if(it&&it.id) by[it.id]=it; });           // servidor primeiro
+    (db[k]||[]).forEach(it=>{ if(!it||!it.id) return; const ex=by[it.id];
+      if(!ex){ by[it.id]=it; return; }
+      const win=(it._m||0)>=(ex._m||0)?it:ex, lose=win===it?ex:it;      // quem editou por ultimo vence
+      if(!win.fonte && lose.fonte) win.fonte=lose.fonte;                 // preserva a origem de qualquer lado
+      by[it.id]=win; });
+    db[k]=Object.values(by); });
   if(Array.isArray(doc.categories)){ const by={}; doc.categories.forEach(c=>by[c.id]=c); (db.categories||[]).forEach(c=>by[c.id]=c); db.categories=Object.values(by); }
   if(doc.budgets) db.budgets=Object.assign({}, doc.budgets, db.budgets||{});
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=Object.assign({}, doc.sherlock, db.settings.catMemory||{}); }
@@ -1199,8 +1206,8 @@ function txSheet(existing){
     if(!amount){ alert('Informe um valor.'); return; }
     const date=sheetContent.querySelector('#dateIn').value||localDate(now);
     const note=sheetContent.querySelector('#noteIn').value.trim();
-    if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note}); }
-    else{ db.transactions.push({id:uid(),type,amount,categoryId:catId,date,note,_o:Date.now()}); }
+    if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note,_m:Date.now()}); }
+    else{ db.transactions.push({id:uid(),type,amount,categoryId:catId,date,note,_o:Date.now(),_m:Date.now()}); }
     if(type==='expense' && note && (!ed || catId!==prevCat)) sherlockLearn(note, catId);
     save(); closeSheet();
     // jump to month of the tx
@@ -1273,9 +1280,9 @@ function toggleBillPaid(id){
     const date=ym+'-'+String(Math.min(b.dueDay,28)).padStart(2,'0');
     if(kind==='in'){
       const cid=catById('c_salary')?'c_salary':(db.categories.find(c=>c.type==='income')||{}).id;
-      db.transactions.push({id:uid(),type:'income',amount:b.amount,categoryId:cid,date,note:b.name,_bill:b.id,_o:Date.now()});
+      db.transactions.push({id:uid(),type:'income',amount:b.amount,categoryId:cid,date,note:b.name,_bill:b.id,_o:Date.now(),_m:Date.now()});
     }else{
-      db.transactions.push({id:uid(),type:'expense',amount:b.amount,categoryId:'c_home',date,note:b.name,_bill:b.id,_o:Date.now()});
+      db.transactions.push({id:uid(),type:'expense',amount:b.amount,categoryId:'c_home',date,note:b.name,_bill:b.id,_o:Date.now(),_m:Date.now()});
     }
   }
   save(); renderAll(); pushSync();
@@ -1558,7 +1565,7 @@ function reviewFatura(banco, items){
         const key=i.date+'|'+i.cents+'|'+NORM(i.name).slice(0,20);
         if(existing.has(key)){ dup++; return; }
         existing.add(key);
-        db.transactions.push({id:uid(),type:'expense',amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_fatura:banco});
+        db.transactions.push({id:uid(),type:'expense',amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_m:Date.now(),_fatura:banco});
         add++; lastDate=i.date;
       });
       chosen.forEach(i=>{ if(i.cat!==i.auto) sherlockLearn(i.rawDesc,i.cat); });
@@ -1687,7 +1694,7 @@ function reviewExtrato(source, items){
         const key=i.date+'|'+i.type+'|'+i.cents+'|'+NORM(i.name).slice(0,20);
         if(existing.has(key)){ dup++; return; }
         existing.add(key);
-        db.transactions.push({id:uid(),type:i.type,amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_extrato:1});
+        db.transactions.push({id:uid(),type:i.type,amount:i.cents,categoryId:i.cat,date:i.date,note:i.name,_o:Date.now(),_m:Date.now(),_extrato:1});
         add++; lastDate=i.date; if(i.type==='expense') cats.add(i.cat);
       });
       chosen.forEach(i=>{ if(i.type==='expense' && i.cat!==i.auto) sherlockLearn(i.rawDesc,i.cat); });
