@@ -236,6 +236,7 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .es-legend{display:flex; gap:22px; justify-content:center; font-size:12.5px; color:var(--muted); margin:2px 0 12px;}
 .es-legend .dot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle;}
 .es-legend b{color:var(--text); font-weight:700;}
+.sched{color:var(--warn); font-weight:600;}
 .card-chips{display:flex; gap:8px; margin:16px 0 2px; flex-wrap:wrap;}
 .cchip{font-size:12.5px; font-weight:600; color:var(--muted); padding:7px 15px; border:.8px solid var(--border); border-radius:999px;}
 .cchip.on{color:var(--brand); border-color:color-mix(in srgb,var(--brand) 50%, var(--border)); background:color-mix(in srgb,var(--brand) 12%, transparent);}
@@ -541,7 +542,7 @@ function renderInicio(){
       const sign=x.type==='income'?'+':'−';
       html+=`<button class="tx" data-tx="${x.id}">
         <span class="ic" style="background:${c.color}">${initials(c.name)}</span>
-        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(x.fonte):''}</div></span>
+        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(x.fonte):''}${x._sched?' · <span class="sched">agendada</span>':''}</div></span>
         <span class="amt ${x.type==='income'?'pos':'neg'} tnum">${sign} ${fmt(x.amount)}</span>
       </button>`;
     });
