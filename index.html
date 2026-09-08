@@ -227,6 +227,15 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .chat-empty{color:var(--muted); font-size:13.5px; text-align:center; line-height:1.9; padding:30px 14px;}
 #chatBar{position:fixed; left:0; right:0; bottom:calc(58px + var(--safe-bot)); z-index:24; max-width:520px; margin:0 auto; display:none; gap:8px; padding:10px 14px; background:color-mix(in srgb,var(--bg) 90%, transparent); backdrop-filter:saturate(160%) blur(14px); -webkit-backdrop-filter:saturate(160%) blur(14px); border-top:.8px solid var(--border);}
 #app:has(.screen[data-name="chat"].active) #chatBar{display:flex;}
+.es-chart{display:flex; align-items:flex-end; gap:10px; height:170px; padding:10px 4px 0; margin:6px 0 2px;}
+.es-col{flex:1; display:flex; flex-direction:column; align-items:center; gap:7px; height:100%;}
+.es-bars{flex:1; width:100%; display:flex; align-items:flex-end; justify-content:center; gap:4px;}
+.es-bars i{width:38%; border-radius:4px 4px 0 0; min-height:0;}
+.es-in{background:var(--pos);} .es-out{background:var(--neg);}
+.es-lbl{font-size:10.5px; color:var(--muted); text-transform:capitalize;}
+.es-legend{display:flex; gap:22px; justify-content:center; font-size:12.5px; color:var(--muted); margin:2px 0 12px;}
+.es-legend .dot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle;}
+.es-legend b{color:var(--text); font-weight:700;}
 .card-chips{display:flex; gap:8px; margin:16px 0 2px; flex-wrap:wrap;}
 .cchip{font-size:12.5px; font-weight:600; color:var(--muted); padding:7px 15px; border:.8px solid var(--border); border-radius:999px;}
 .cchip.on{color:var(--brand); border-color:color-mix(in srgb,var(--brand) 50%, var(--border)); background:color-mix(in srgb,var(--brand) 12%, transparent);}
@@ -324,6 +333,7 @@ input,select,textarea{font-family:inherit; font-size:16px;}
   <section class="screen" data-name="orcamento" id="scr-orcamento"></section>
   <section class="screen" data-name="patrimonio" id="scr-patrimonio"></section>
   <section class="screen" data-name="contas" id="scr-contas"></section>
+  <section class="screen" data-name="relatorios" id="scr-relatorios"></section>
   <section class="screen" data-name="chat" id="scr-chat"></section>
   <section class="screen" data-name="ajustes" id="scr-ajustes"></section>
 
@@ -344,6 +354,8 @@ input,select,textarea{font-family:inherit; font-size:16px;}
       <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>Patrimônio</button>
     <button class="tab" data-tab="contas">
       <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Fixos</button>
+    <button class="tab" data-tab="relatorios">
+      <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 5-7"/></svg>Relatórios</button>
     <button class="tab" data-tab="chat">
       <svg viewBox="0 0 24 24"><path d="M21 11.5a8.5 8 0 0 1-8.5 8.5H7l-4 3v-4.2A8.5 8 0 0 1 12.5 3 8.5 8 0 0 1 21 11.5Z"/></svg>Chat</button>
     <button class="tab" data-tab="ajustes">
@@ -717,12 +729,40 @@ function learnSheet(){
   const fa=sheetContent.querySelector('#forgetAll'); if(fa) fa.addEventListener('click',()=>{ if(confirm('Esquecer todas as categorias aprendidas?')){ db.settings.catMemory={}; save(); learnSheet(); } });
 }
 
+function renderRelatorios(){
+  // Entradas x Saidas: ultimos 6 ciclos (mesma regua do fechamento)
+  const N=6, cyc=[]; let y=curY, m=curM;
+  for(let i=0;i<N;i++){ cyc.unshift({m,key:y+'-'+String(m+1).padStart(2,'0')}); m--; if(m<0){m=11;y--;} }
+  const agg=cyc.map(c=>{ let inc=0,exp=0; db.transactions.forEach(t=>{ if(cycleKey(t.date)===c.key){ if(t.type==='income') inc+=t.amount; else exp+=t.amount; } }); return {m:c.m, inc, exp}; });
+  const maxV=Math.max(1, ...agg.map(a=>Math.max(a.inc,a.exp)));
+  const atual=agg[N-1];
+  let html=`<div class="hero"><div class="lbl">Entradas × Saídas</div><div class="val tnum">${fmt(atual.inc-atual.exp)}</div><div class="sub">saldo do ${closingDay()?'ciclo':'mês'} atual · últimos ${N} ${closingDay()?'ciclos':'meses'}</div></div>`;
+  html+=`<div class="es-chart">`;
+  agg.forEach(a=>{ const ih=Math.round(a.inc/maxV*100), eh=Math.round(a.exp/maxV*100);
+    html+=`<div class="es-col"><div class="es-bars"><i class="es-in" style="height:${a.inc?Math.max(2,ih):0}%"></i><i class="es-out" style="height:${a.exp?Math.max(2,eh):0}%"></i></div><div class="es-lbl">${MONTHS_SHORT[a.m]}</div></div>`; });
+  html+=`</div>`;
+  const tin=agg.reduce((s,a)=>s+a.inc,0), tout=agg.reduce((s,a)=>s+a.exp,0);
+  html+=`<div class="es-legend"><span><i class="dot" style="background:var(--pos)"></i>Entradas <b class="tnum">${fmt(tin)}</b></span><span><i class="dot" style="background:var(--neg)"></i>Saídas <b class="tnum">${fmt(tout)}</b></span></div>`;
+  // Gastos por cartao (ciclo atual)
+  const ym=ymOf(), byCard={};
+  db.transactions.forEach(t=>{ if(cycleKey(t.date)===ym && t.type==='expense' && t.fonte){ byCard[t.fonte]=(byCard[t.fonte]||0)+t.amount; } });
+  const cards=Object.entries(byCard).sort((a,b)=>b[1]-a[1]);
+  if(cards.length){ const maxc=cards[0][1];
+    html+=`<div class="sec-title">Gastos por cartão · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div><div class="cat-bars">`;
+    cards.forEach(([f,v])=>{ html+=`<div class="cbar"><div class="row"><span class="nm">${esc(f)}</span><span class="tnum">${fmt(v)}</span></div><div class="track"><i style="width:${Math.max(6,Math.round(v/maxc*100))}%;background:var(--brand)"></i></div></div>`; });
+    html+=`</div>`;
+  } else {
+    html+=`<div class="empty"><b>Sem gastos por cartão neste ${closingDay()?'ciclo':'mês'}</b>Os lançamentos do Open Finance trazem a origem (XP/Nubank) pra cá.</div>`;
+  }
+  $('#scr-relatorios').innerHTML=html;
+}
 function renderAll(){
   renderMonthLabel();
   if(activeTab==='inicio') renderInicio();
   else if(activeTab==='patrimonio') renderPatrimonio();
   else if(activeTab==='orcamento') renderOrcamento();
   else if(activeTab==='contas') renderContas();
+  else if(activeTab==='relatorios') renderRelatorios();
   else if(activeTab==='chat') renderChat();
   else if(activeTab==='ajustes') renderAjustes();
 }
