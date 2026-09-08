@@ -237,6 +237,8 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .es-legend .dot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle;}
 .es-legend b{color:var(--text); font-weight:700;}
 .sched{color:var(--warn); font-weight:600;}
+.tx-tags{display:flex; gap:5px; flex-wrap:wrap; margin-top:5px;}
+.ttag{font-size:10.5px; font-weight:600; color:var(--muted); background:color-mix(in srgb,var(--muted) 14%, transparent); border-radius:5px; padding:2px 7px;}
 .card-chips{display:flex; gap:8px; margin:16px 0 2px; flex-wrap:wrap;}
 .cchip{font-size:12.5px; font-weight:600; color:var(--muted); padding:7px 15px; border:.8px solid var(--border); border-radius:999px;}
 .cchip.on{color:var(--brand); border-color:color-mix(in srgb,var(--brand) 50%, var(--border)); background:color-mix(in srgb,var(--brand) 12%, transparent);}
@@ -542,7 +544,7 @@ function renderInicio(){
       const sign=x.type==='income'?'+':'−';
       html+=`<button class="tx" data-tx="${x.id}">
         <span class="ic" style="background:${c.color}">${initials(c.name)}</span>
-        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(x.fonte):''}${x._sched?' · <span class="sched">agendada</span>':''}</div></span>
+        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(x.fonte):''}${x._sched?' · <span class="sched">agendada</span>':''}</div>${x.tags&&x.tags.length?`<div class="tx-tags">${x.tags.map(tg=>`<span class="ttag">${esc(tg)}</span>`).join('')}</div>`:''}</span>
         <span class="amt ${x.type==='income'?'pos':'neg'} tnum">${sign} ${fmt(x.amount)}</span>
       </button>`;
     });
@@ -754,6 +756,15 @@ function renderRelatorios(){
     html+=`</div>`;
   } else {
     html+=`<div class="empty"><b>Sem gastos por cartão neste ${closingDay()?'ciclo':'mês'}</b>Os lançamentos do Open Finance trazem a origem (XP/Nubank) pra cá.</div>`;
+  }
+  // Gastos por etiqueta (ciclo atual)
+  const byTag={};
+  db.transactions.forEach(t=>{ if(cycleKey(t.date)===ym && t.type==='expense' && Array.isArray(t.tags)){ t.tags.forEach(tg=>{ byTag[tg]=(byTag[tg]||0)+t.amount; }); } });
+  const tags=Object.entries(byTag).sort((a,b)=>b[1]-a[1]);
+  if(tags.length){ const maxt=tags[0][1];
+    html+=`<div class="sec-title">Gastos por etiqueta · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div><div class="cat-bars">`;
+    tags.forEach(([tg,v])=>{ html+=`<div class="cbar"><div class="row"><span class="nm">${esc(tg)}</span><span class="tnum">${fmt(v)}</span></div><div class="track"><i style="width:${Math.max(6,Math.round(v/maxt*100))}%;background:var(--brand)"></i></div></div>`; });
+    html+=`</div>`;
   }
   $('#scr-relatorios').innerHTML=html;
 }
@@ -1216,6 +1227,7 @@ function txSheet(existing){
       <div class="field"><label>Categoria</label><div class="chips" id="catChips"></div></div>
       <div class="field"><label>Data</label><input type="date" id="dateIn" value="${ed?ed.date:localDate(now)}"></div>
       <div class="field"><label>Observação</label><input type="text" id="noteIn" placeholder="Opcional" value="${ed?esc(ed.note||''):''}" maxlength="60"></div>
+      <div class="field"><label>Etiquetas (separadas por vírgula)</label><input type="text" id="tagsIn" placeholder="ex: viagem, reembolsável" value="${ed&&ed.tags?esc(ed.tags.join(', ')):''}" maxlength="80"></div>
       ${ed?'<button class="btn ghost" id="delBtn">Excluir lançamento</button>':''}
     </div>`;
   openSheet(html);
@@ -1247,8 +1259,9 @@ function txSheet(existing){
     if(!amount){ alert('Informe um valor.'); return; }
     const date=sheetContent.querySelector('#dateIn').value||localDate(now);
     const note=sheetContent.querySelector('#noteIn').value.trim();
-    if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note,_m:Date.now()}); }
-    else{ db.transactions.push({id:uid(),type,amount,categoryId:catId,date,note,_o:Date.now(),_m:Date.now()}); }
+    const tags=sheetContent.querySelector('#tagsIn').value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,6);
+    if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note,_m:Date.now()}); if(tags.length) ed.tags=tags; else delete ed.tags; }
+    else{ const t={id:uid(),type,amount,categoryId:catId,date,note,_o:Date.now(),_m:Date.now()}; if(tags.length) t.tags=tags; db.transactions.push(t); }
     if(type==='expense' && note && (!ed || catId!==prevCat)) sherlockLearn(note, catId);
     save(); closeSheet();
     // jump to month of the tx
