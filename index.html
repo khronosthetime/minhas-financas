@@ -382,7 +382,7 @@ function defaults(){
 let db;
 try{ db=JSON.parse(localStorage.getItem(KEY)); }catch(e){ db=null; }
 if(!db||!db.categories){ db=defaults(); }
-function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ alert('Não foi possível salvar. O armazenamento do navegador pode estar cheio ou bloqueado.'); } }
+function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ alert('Não foi possível salvar. O armazenamento do navegador pode estar cheio ou bloqueado.'); } cloudSchedulePush(); }
 
 // state
 const now=new Date();
@@ -607,6 +607,8 @@ function renderAjustes(){
   const pushTxt = pushOn ? 'Ativado. Alerta chega no celular mesmo com o app fechado.' : 'Toque para ativar (precisa do servidor na nuvem).';
   const lockOn=!!(db.settings&&db.settings.pinHash);
   const lockTxt = lockOn ? ('PIN ativado'+(db.settings.faceCred?' + Face ID':'')+'. Pede ao abrir o app.') : 'Proteja o app com um PIN de 4 dígitos (e Face ID).';
+  const cloudFlag=!!(db.settings&&db.settings.cloudOn);
+  const cloudTxt = cloudFlag ? 'Ligada. iPhone e computador com os mesmos dados.' : 'Guarde tudo numa nuvem sua e use no celular e no computador.';
   let html=`
     <div class="sec-title">Importar</div>
     <div class="list">
@@ -617,6 +619,10 @@ function renderAjustes(){
     <div class="list">
       <button class="item" id="exportBtn"><div class="t">Exportar backup<small>Salva um arquivo .json com tudo (${nTx} lançamentos, ${nBills} contas)</small></div><span class="chev">↓</span></button>
       <button class="item" id="importBtn"><div class="t">Importar backup<small>Restaura os dados de um arquivo salvo</small></div><span class="chev">↑</span></button>
+    </div>
+    <div class="sec-title">Nuvem</div>
+    <div class="list">
+      <button class="item" id="cloudBtn"><div class="t">Sincronizar com a nuvem<small>${cloudTxt}</small></div><span class="chev">›</span></button>
     </div>
     <div class="sec-title">Categorias</div>
     <div class="list">
@@ -633,7 +639,7 @@ function renderAjustes(){
     <div class="sec-title">Aparência</div>
     <div class="list"><div class="item"><div class="t">Tema<small>Escuro fixo, no estilo Kalshi/Pierre</small></div></div></div>
     <div class="list"><button class="item danger" id="wipeBtn"><div class="t">Apagar todos os dados<small>Remove tudo deste aparelho. Não dá para desfazer.</small></div></button></div>
-    <div class="foot">Minhas Finanças · versão 1.0<br>Todos os dados ficam salvos apenas neste iPhone. Nada é enviado para a internet.</div>
+    <div class="foot">Minhas Finanças · versão 1.0<br>${cloudFlag?'Sincronizado com a sua nuvem. Os dados ficam no seu servidor e neste aparelho.':'Todos os dados ficam salvos apenas neste aparelho.'}</div>
     <input type="file" id="importFile" accept="application/json,.json" class="hidden">
     <input type="file" id="faturaFile" accept="application/pdf,.pdf" class="hidden">
     <input type="file" id="extratoFile" accept=".ofx,.csv,text/csv,application/x-ofx,application/vnd.intu.qfx" class="hidden">`;
@@ -968,6 +974,88 @@ async function enablePush(){
     toast(ok?'Alertas com o app fechado ativados.':'Ativado no app, mas o servidor não respondeu. Confira o endereço.');
   }catch(e){ toast('Não deu pra ativar: '+(e.message||e)); }
   renderAll();
+}
+
+/* ================= NUVEM (sincronizacao central) ================= */
+// O app guarda tudo numa nuvem nossa (Supabase via /api/state). O localStorage
+// vira cache offline; a verdade e o doc versionado no servidor. iPhone e
+// computador compartilham o mesmo dado. So estas chaves sobem (nada de PIN/push).
+const CLOUD_KEYS=['categories','transactions','bills','budgets','patrimonio'];
+let cloudDirty=false, cloudBusy=false, cloudTimer=null, cloudLast='';
+function cloudCfg(){ db.settings=db.settings||{}; return db.settings; }
+function cloudOn(){ const s=cloudCfg(); return !!(s.cloudOn && (s.cloudUrl||s.pushServer) && s.cloudSecret && s.cloudAcct); }
+function cloudBase(){ const s=cloudCfg(); return (s.cloudUrl||s.pushServer||'').replace(/\/+$/,''); }
+function cloudDoc(){ const d={}; CLOUD_KEYS.forEach(k=>{ d[k]=db[k]; }); d.sherlock=(db.settings&&db.settings.catMemory)||{}; return d; }
+function cloudSaveLocal(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){} } // salva sem re-agendar push
+function cloudReplace(doc){ // servidor autoritativo (pull mais novo)
+  if(!doc||typeof doc!=='object') return;
+  CLOUD_KEYS.forEach(k=>{ if(doc[k]!==undefined) db[k]=doc[k]; });
+  if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=doc.sherlock; }
+}
+function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adicionado offline
+  if(!doc||typeof doc!=='object') return;
+  ['transactions','bills','patrimonio'].forEach(k=>{ if(!Array.isArray(doc[k])) return;
+    const by={}; (doc[k]||[]).forEach(it=>{ if(it&&it.id) by[it.id]=it; }); (db[k]||[]).forEach(it=>{ if(it&&it.id) by[it.id]=it; }); db[k]=Object.values(by); });
+  if(Array.isArray(doc.categories)){ const by={}; doc.categories.forEach(c=>by[c.id]=c); (db.categories||[]).forEach(c=>by[c.id]=c); db.categories=Object.values(by); }
+  if(doc.budgets) db.budgets=Object.assign({}, doc.budgets, db.budgets||{});
+  if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=Object.assign({}, doc.sherlock, db.settings.catMemory||{}); }
+}
+function cloudStatus(state,msg){ cloudLast = state==='ok'?'Sincronizado agora.' : state==='sync'?'Sincronizando...' : ('Erro: '+(msg||'')); const el=document.getElementById('cloudStatusLine'); if(el) el.textContent=cloudLast; if(state==='err') console.warn('[nuvem]',msg); }
+async function cloudReq(method,path,body){
+  const s=cloudCfg();
+  const r=await fetch(cloudBase()+path,{method,headers:{'Content-Type':'application/json','Authorization':'Bearer '+(s.cloudSecret||'')},body:body?JSON.stringify(body):undefined});
+  if(r.status===401) throw new Error('segredo invalido (401)');
+  if(!r.ok) throw new Error('http '+r.status);
+  return r.json();
+}
+function cloudSchedulePush(){ if(!cloudOn()) return; cloudDirty=true; clearTimeout(cloudTimer); cloudTimer=setTimeout(cloudPush,1200); }
+async function cloudPush(){
+  if(!cloudOn()||cloudBusy) return; cloudBusy=true; cloudStatus('sync');
+  try{ const s=cloudCfg();
+    let res=await cloudReq('POST','/api/state',{clientId:s.cloudAcct,baseRev:s.cloudRev||0,doc:cloudDoc()});
+    if(res.conflict){ cloudUnion(res.doc); s.cloudRev=res.rev; cloudSaveLocal(); renderAll();
+      res=await cloudReq('POST','/api/state',{clientId:s.cloudAcct,baseRev:s.cloudRev||0,doc:cloudDoc()}); }
+    if(res.ok){ s.cloudRev=res.rev; cloudDirty=false; cloudSaveLocal(); cloudStatus('ok'); }
+  }catch(e){ cloudStatus('err',e.message); }
+  finally{ cloudBusy=false; }
+}
+async function cloudPull(){
+  if(!cloudOn()||cloudBusy) return;
+  if(cloudDirty){ return cloudPush(); }
+  cloudBusy=true; cloudStatus('sync');
+  try{ const s=cloudCfg();
+    const res=await cloudReq('GET','/api/state?clientId='+encodeURIComponent(s.cloudAcct));
+    if((res.rev||0)===0 && (s.cloudRev||0)===0){ cloudBusy=false; cloudDirty=true; return cloudPush(); } // servidor vazio: sobe o local
+    if((res.rev||0)>(s.cloudRev||0) && res.doc){ cloudReplace(res.doc); s.cloudRev=res.rev; cloudSaveLocal(); renderAll(); }
+    cloudStatus('ok');
+  }catch(e){ cloudStatus('err',e.message); }
+  finally{ cloudBusy=false; }
+}
+function cloudSheet(){
+  const s=cloudCfg();
+  openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Nuvem</h2><button id="shSave">${s.cloudOn?'Sincronizar':'Ligar'}</button></div><div class="body">
+    <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">Guarda tudo numa nuvem sua e mantém iPhone e computador com os mesmos dados. Só quem tem o endereço e o segredo acessa.</p>
+    <div class="field"><label>Endereço do servidor</label><input type="text" id="cloudUrlIn" placeholder="https://..." value="${esc(s.cloudUrl||s.pushServer||'https://minhas-financas-push.vercel.app')}"></div>
+    <div class="field"><label>Segredo (APP_SECRET)</label><input type="text" id="cloudSecIn" placeholder="cole o segredo" autocomplete="off" value="${esc(s.cloudSecret||'')}"></div>
+    <div id="cloudStatusLine" style="font-size:12px;color:var(--muted);margin:4px 0 0;">${s.cloudOn?(cloudLast||'Sincronização ligada.'):'Desligada.'}</div>
+    ${s.cloudOn?'<button id="cloudOffBtn" style="margin-top:18px;color:var(--muted);font-size:13px;">Desligar sincronização neste aparelho</button>':''}
+  </div>`);
+  sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  sheetContent.querySelector('#shSave').addEventListener('click',async()=>{
+    const url=(sheetContent.querySelector('#cloudUrlIn').value||'').trim().replace(/\/+$/,'');
+    const sec=(sheetContent.querySelector('#cloudSecIn').value||'').trim();
+    if(!/^https:\/\/.+/.test(url)){ toast('Endereço inválido. Deve começar com https://'); return; }
+    if(!sec){ toast('Cole o segredo (APP_SECRET).'); return; }
+    const acct=await sha256(sec);
+    if(s.cloudAcct && s.cloudAcct!==acct) s.cloudRev=0; // segredo novo = outra conta, re-sincroniza do zero
+    s.cloudUrl=url; s.cloudSecret=sec; s.cloudAcct=acct; s.cloudOn=true; s.cloudRev=s.cloudRev||0;
+    cloudSaveLocal(); cloudDirty=true; cloudStatus('sync');
+    await cloudPush();
+    if(cloudLast.startsWith('Erro')){ toast('Não conectou. '+cloudLast); }
+    else { toast('Nuvem ligada e sincronizada.'); renderAll(); }
+  });
+  const off=sheetContent.querySelector('#cloudOffBtn');
+  if(off) off.addEventListener('click',()=>{ s.cloudOn=false; cloudSaveLocal(); toast('Sincronização desligada neste aparelho.'); closeSheet(); renderAll(); });
 }
 
 /* ---------- BLOQUEIO (PIN / Face ID) ---------- */
@@ -1637,6 +1725,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#importBtn')){ $('#importFile').click(); return; }
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#extratoBtn')){ $('#extratoFile').click(); return; }
+  if(e.target.closest('#cloudBtn')){ cloudSheet(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
   if(e.target.closest('#learnBtn')){ learnSheet(); return; }
   if(e.target.closest('#lockBtn')){ lockSheet(); return; }
@@ -1653,6 +1742,11 @@ $('#app').addEventListener('change',e=>{
 renderAll();
 applyPriv();
 if(db.settings && db.settings.pinHash) showLock();
+
+// Nuvem: puxa ao abrir, e re-sincroniza quando volta a internet ou o app volta ao foco.
+window.addEventListener('online', ()=>{ if(cloudOn()) cloudPull(); });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && cloudOn()) cloudPull(); });
+if(cloudOn()) setTimeout(cloudPull, 500);
 })();
 </script>
 <!--ARTIFACT_END-->
