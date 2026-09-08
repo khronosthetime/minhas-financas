@@ -387,6 +387,7 @@ function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ a
 // state
 const now=new Date();
 let curY=now.getFullYear(), curM=now.getMonth(); // 0-11
+{ const _ck=cycleKey(localDate(now)).split('-'); curY=+_ck[0]; curM=+_ck[1]-1; } // abre na fatura aberta
 let activeTab='inicio';
 let homeFilter=null; // categoria filtrada na tela Início (ou null)
 let patrFilter=null; // classe de ativo filtrada no Patrimônio (ou null)
@@ -395,7 +396,13 @@ const $=s=>document.querySelector(s);
 const catById=id=>db.categories.find(c=>c.id===id);
 function localDate(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function ymOf(){return curY+'-'+String(curM+1).padStart(2,'0');}
-function txInMonth(){const ym=ymOf(); return db.transactions.filter(t=>t.date.slice(0,7)===ym);}
+// Periodo por FECHAMENTO de fatura. Dia de fechamento configuravel (0 = por mes do calendario).
+// Um gasto no dia >= fechamento entra na fatura do proximo mes; antes disso, na do mes atual.
+function closingDay(){ const s=db.settings||{}; if(s.closingDay===0) return 0; const d=parseInt(s.closingDay,10); return (d>=1&&d<=28)?d:6; }
+function cycleKey(dateStr){ const cd=closingDay(); if(!cd) return dateStr.slice(0,7); let [Y,M,D]=dateStr.split('-').map(Number); if(D<cd){ M--; if(M<1){M=12;Y--;} } return Y+'-'+String(M).padStart(2,'0'); }
+function curCycle(){ return cycleKey(localDate(now)); }
+function cycleRange(){ const cd=closingDay(); if(!cd) return ''; const s=new Date(curY,curM,cd), e=new Date(curY,curM+1,cd-1); const f=d=>String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); return f(s)+'–'+f(e); }
+function txInMonth(){const ym=ymOf(); return db.transactions.filter(t=>cycleKey(t.date)===ym);}
 
 function monthTotals(){
   let inc=0,exp=0;
@@ -443,9 +450,9 @@ function renderInicio(){
 
   let html=`
     <div class="hero">
-      <div class="lbl">Saldo do mês</div>
+      <div class="lbl">${closingDay()?'Saldo da fatura':'Saldo do mês'}</div>
       <div class="val tnum">${fmt(t.bal)}</div>
-      <div class="sub">${list.length} lançamento${list.length===1?'':'s'} em ${MONTHS[curM].toLowerCase()}</div>
+      <div class="sub">${list.length} lançamento${list.length===1?'':'s'}${closingDay()?' · '+cycleRange():' em '+MONTHS[curM].toLowerCase()}</div>
     </div>
     <div class="tiles">
       <div class="tile pos"><div class="lbl">Entrou</div><div class="v tnum">${fmt(t.inc)}</div></div>
@@ -547,9 +554,10 @@ function billStatus(b){
   const ym=ymOf();
   const paid=(b.paidMonths||[]).includes(ym);
   if(paid) return 'ok';
-  // late if this month is current month and dueDay passed, or month already ended
-  const isCurrent=(curY===now.getFullYear()&&curM===now.getMonth());
-  const isPast=(curY<now.getFullYear())||(curY===now.getFullYear()&&curM<now.getMonth());
+  // atrasada se a fatura ja passou, ou se e a atual e o dia de vencimento passou
+  const cc=curCycle();
+  const isCurrent=(ymOf()===cc);
+  const isPast=(ymOf()<cc);
   if(isPast) return 'late';
   if(isCurrent && now.getDate()>b.dueDay) return 'late';
   return 'open';
@@ -609,6 +617,8 @@ function renderAjustes(){
   const lockTxt = lockOn ? ('PIN ativado'+(db.settings.faceCred?' + Face ID':'')+'. Pede ao abrir o app.') : 'Proteja o app com um PIN de 4 dígitos (e Face ID).';
   const cloudFlag=!!(db.settings&&db.settings.cloudOn);
   const cloudTxt = cloudFlag ? 'Ligada. iPhone e computador com os mesmos dados.' : 'Guarde tudo numa nuvem sua e use no celular e no computador.';
+  const cd=closingDay();
+  const cdTxt = cd ? `Fatura fecha no dia ${cd}. O app agrupa pelo ciclo do cartão, não pelo mês.` : 'Por mês do calendário (dia 1 a 30).';
   let html=`
     <div class="sec-title">Importar</div>
     <div class="list">
@@ -623,6 +633,10 @@ function renderAjustes(){
     <div class="sec-title">Nuvem</div>
     <div class="list">
       <button class="item" id="cloudBtn"><div class="t">Sincronizar com a nuvem<small>${cloudTxt}</small></div><span class="chev">›</span></button>
+    </div>
+    <div class="sec-title">Período</div>
+    <div class="list">
+      <button class="item" id="closeDayBtn"><div class="t">Dia de fechamento da fatura<small>${cdTxt}</small></div><span class="chev">›</span></button>
     </div>
     <div class="sec-title">Categorias</div>
     <div class="list">
@@ -941,7 +955,7 @@ function buildSnapshot(){
   const ym=ry+'-'+String(rm).padStart(2,'0'); const cats={};
   Object.keys(db.budgets||{}).forEach(cid=>{
     if(db.budgets[cid]>0){ const c=catById(cid); if(!c) return;
-      let spent=0; db.transactions.forEach(t=>{ if(t.type==='expense'&&t.categoryId===cid && t.date.slice(0,7)===ym) spent+=t.amount; });
+      let spent=0; db.transactions.forEach(t=>{ if(t.type==='expense'&&t.categoryId===cid && cycleKey(t.date)===ym) spent+=t.amount; });
       cats[cid]={name:c.name,budget:db.budgets[cid],spent};
     }
   });
@@ -1221,7 +1235,7 @@ function toggleBillPaid(id){
   const kind=b.kind||'out';
   if(i>=0){
     b.paidMonths.splice(i,1);
-    db.transactions=db.transactions.filter(t=>!(t._bill===b.id && t.date.slice(0,7)===ym));
+    db.transactions=db.transactions.filter(t=>!(t._bill===b.id && cycleKey(t.date)===ym));
   }else{
     b.paidMonths.push(ym);
     const date=ym+'-'+String(Math.min(b.dueDay,28)).padStart(2,'0');
@@ -1726,6 +1740,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#extratoBtn')){ $('#extratoFile').click(); return; }
   if(e.target.closest('#cloudBtn')){ cloudSheet(); return; }
+  if(e.target.closest('#closeDayBtn')){ const cur=closingDay(); const v=prompt('Dia de fechamento da fatura (1 a 28). Digite 0 para voltar ao mês do calendário.', String(cur)); if(v===null) return; const n=parseInt(v,10); if(isNaN(n)||n<0||n>28){ toast('Digite um número de 0 a 28.'); return; } db.settings=db.settings||{}; db.settings.closingDay=n; save(); const ck=cycleKey(localDate(now)).split('-'); curY=+ck[0]; curM=+ck[1]-1; homeFilter=null; toast(n?('Agora por fechamento, dia '+n+'.'):'Agora por mês do calendário.'); renderAll(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
   if(e.target.closest('#learnBtn')){ learnSheet(); return; }
   if(e.target.closest('#lockBtn')){ lockSheet(); return; }
