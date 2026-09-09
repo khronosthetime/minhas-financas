@@ -1152,8 +1152,23 @@ function patrRow(i){
     <span class="pamt"><span class="amt tnum" style="${neg?'color:var(--neg)':''}">${neg?'− ':''}${fmt(i.valor)}</span>${rline}</span>
   </button>`;
 }
+// Abate a parcela das dívidas marcadas como "auto" uma vez por mês. Trava: decMonth
+// (ano-mês do último abatimento) garante idempotência; se pular meses, aplica todos.
+function ymNow(){ return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0'); }
+function applyDebtAutopay(){
+  const cur=ymNow(); let changed=false;
+  (db.patrimonio||[]).forEach(it=>{
+    if(!it || it.classe!=='divida' || !it.auto || !(it.aporte>0) || it.status==='pendente') return;
+    if(!it.decMonth){ it.decMonth=cur; changed=true; return; }   // baseline (persiste): começa a abater no mês seguinte
+    const [ly,lm]=it.decMonth.split('-').map(Number), [cy,cm]=cur.split('-').map(Number);
+    const meses=(cy-ly)*12+(cm-lm);
+    if(meses>0){ it.valor=Math.max(0, it.valor - meses*it.aporte); it.decMonth=cur; if(it.valor===0) delete it.auto; changed=true; }
+  });
+  if(changed) save();
+}
 function renderPatrimonio(){
   db.patrimonio=db.patrimonio||[];
+  applyDebtAutopay();
   const items=db.patrimonio;
   const ativosItems=items.filter(i=>{ const c=patrClass(i.classe); return !c.passivo && !c.futuro; });
   const receberItems=items.filter(i=>patrClass(i.classe).futuro);
@@ -1240,6 +1255,7 @@ function patrimonioSheet(existing, defClasse){
   const ed=existing||null;
   let classe=ed?ed.classe:(defClasse||'investimentos');
   let status=ed&&ed.status?ed.status:'pagando';
+  let auto=!!(ed&&ed.auto);
   openSheet(`
     <div class="sh-head"><button id="shCancel">Cancelar</button><h2>${ed?'Editar posição':'Nova posição'}</h2><button id="shSave">Salvar</button></div>
     <div class="body">
@@ -1248,16 +1264,19 @@ function patrimonioSheet(existing, defClasse){
       <div class="field" id="pStatusField"><label>Situação da dívida</label><div class="chips" id="pStatus"><button class="chip ${status==='pagando'?'on':''}" data-st="pagando">Em pagamento</button><button class="chip ${status==='pendente'?'on':''}" data-st="pendente">Pendente</button></div></div>
       <div class="field"><label>Valor atual</label><input type="text" id="pVal" placeholder="0,00" inputmode="numeric"></div>
       <div class="field"><label>Aporte / pagamento mensal (opcional)</label><input type="text" id="pAporte" placeholder="0,00" inputmode="numeric"></div>
+      <div class="field" id="pAutoField"><label>Pagamento</label><div class="chips" id="pAuto"><button class="chip ${auto?'on':''}" data-auto="1">Abater a parcela todo mês</button></div></div>
       <div class="field"><label>Rentabilidade % em 12 meses (opcional)</label><input type="text" id="pRentab" inputmode="decimal" placeholder="Ex: 38,55 ou -5,2" value="${ed&&ed.rentab!=null&&ed.rentab!==''?String(ed.rentab).replace('.',','):''}"></div>
       ${ed?'<button class="btn ghost" id="delBtn">Excluir posição</button>':''}
     </div>`);
   const getVal=bindMoney(sheetContent.querySelector('#pVal'), ed?ed.valor:0);
   const getAp=bindMoney(sheetContent.querySelector('#pAporte'), ed?ed.aporte:0);
   const stField=sheetContent.querySelector('#pStatusField');
-  const syncStatus=()=>{ stField.hidden = classe!=='divida'; };
+  const autoField=sheetContent.querySelector('#pAutoField');
+  const syncStatus=()=>{ const isDiv=classe==='divida'; stField.hidden=!isDiv; autoField.hidden=!isDiv; };
   syncStatus();
   sheetContent.querySelector('#pClasses').addEventListener('click',e=>{const b=e.target.closest('[data-pc]');if(!b)return;classe=b.dataset.pc;sheetContent.querySelectorAll('#pClasses .chip').forEach(x=>x.classList.toggle('on',x.dataset.pc===classe));syncStatus();});
   sheetContent.querySelector('#pStatus').addEventListener('click',e=>{const b=e.target.closest('[data-st]');if(!b)return;status=b.dataset.st;sheetContent.querySelectorAll('#pStatus .chip').forEach(x=>x.classList.toggle('on',x.dataset.st===status));});
+  sheetContent.querySelector('#pAuto').addEventListener('click',e=>{const b=e.target.closest('[data-auto]');if(!b)return;auto=!auto;b.classList.toggle('on',auto);});
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
   if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{ if(confirm('Excluir esta posição?')){ db.patrimonio=db.patrimonio.filter(p=>p.id!==ed.id); save(); closeSheet(); renderAll(); } });
   sheetContent.querySelector('#shSave').addEventListener('click',()=>{
@@ -1267,9 +1286,12 @@ function patrimonioSheet(existing, defClasse){
     const rentab = (rr!=='' && !isNaN(parseFloat(rr))) ? parseFloat(rr) : null;
     if(!nome){ alert('Dê um nome.'); return; }
     if(!valor){ alert('Informe o valor atual.'); return; }
-    const pend = classe==='divida' && status==='pendente';
-    if(ed){ Object.assign(ed,{nome,classe,valor,aporte,rentab}); if(pend) ed.status='pendente'; else delete ed.status; }
-    else{ const o={id:uid(),nome,classe,valor,aporte,rentab}; if(pend) o.status='pendente'; db.patrimonio.push(o); }
+    const isDiv = classe==='divida';
+    const pend = isDiv && status==='pendente';
+    const autopay = isDiv && auto && aporte>0 && !pend;   // pendente não abate
+    if(ed){ Object.assign(ed,{nome,classe,valor,aporte,rentab}); if(pend) ed.status='pendente'; else delete ed.status;
+      if(autopay){ ed.auto=true; if(!ed.decMonth) ed.decMonth=ymNow(); } else { delete ed.auto; delete ed.decMonth; } }
+    else{ const o={id:uid(),nome,classe,valor,aporte,rentab}; if(pend) o.status='pendente'; if(autopay){ o.auto=true; o.decMonth=ymNow(); } db.patrimonio.push(o); }
     save(); closeSheet(); renderAll();
   });
 }
