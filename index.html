@@ -1169,17 +1169,17 @@ function renderPatrimonio(){
   const maxC=classes.length?classes[0][1]:1;
   if(patrFilter && !byClass[patrFilter]) patrFilter=null;
 
-  // evolução: registra snapshot do ciclo atual e monta a série dos últimos 6 ciclos.
-  // Onde há snapshot real usa ele; onde não há (passado), reconstrói do resultado mensal (ganho).
+  // evolução: mês atual = líquido calculado; passado = valor que VOCÊ salvou (Editar).
+  // Sem valor salvo, o mês repete o seguinte (linha reta) — NÃO estima por fluxo (aporte distorce).
   db.patrHist = db.patrHist || {};
   db.patrHist[ymOf()] = liquido;
   const NC=6, ecyc=[]; let ey=curY, em=curM;
   for(let i=0;i<NC;i++){ ecyc.unshift({m:em,key:ey+'-'+String(em+1).padStart(2,'0')}); em--; if(em<0){em=11;ey--;} }
-  const net=ecyc.map(c=>{ let s=0; db.transactions.forEach(tx=>{ if(cycleKey(tx.date)===c.key) s+= tx.type==='income'?tx.amount:-tx.amount; }); return s; });
   const nw=new Array(NC);
-  nw[NC-1] = db.patrHist[ecyc[NC-1].key]!=null ? db.patrHist[ecyc[NC-1].key] : liquido;
-  for(let i=NC-2;i>=0;i--){ nw[i] = db.patrHist[ecyc[i].key]!=null ? db.patrHist[ecyc[i].key] : (nw[i+1]-net[i+1]); }
+  nw[NC-1] = liquido;
+  for(let i=NC-2;i>=0;i--){ nw[i] = db.patrHist[ecyc[i].key]!=null ? db.patrHist[ecyc[i].key] : nw[i+1]; }
   const elabels=ecyc.map(c=>MONTHS_SHORT[c.m]);
+  const hasHist = ecyc.slice(0,NC-1).some(c=>db.patrHist[c.key]!=null);
   const ganho2 = nw[NC-1]-nw[NC-3];
 
   let html=`<div class="board">`;
@@ -1193,7 +1193,7 @@ function renderPatrimonio(){
 
   html+=`<div class="board-grid"><div class="board-col board-main">`;
   // Evolução (curva)
-  html+=`<div class="panel"><div class="sec-title">Evolução do patrimônio <button id="editHist">Editar</button></div>${lineChart(nw,elabels)}<div class="es-legend" style="margin-top:12px"><span>Últimos 2 ${closingDay()?'ciclos':'meses'} <b class="tnum ${ganho2>=0?'pos':'neg'}">${ganho2>=0?'+':'−'} ${fmt(Math.abs(ganho2))}</b></span></div></div>`;
+  html+=`<div class="panel"><div class="sec-title">Evolução do patrimônio <button id="editHist">Editar</button></div>${lineChart(nw,elabels)}<div class="es-legend" style="margin-top:12px">${hasHist?`<span>Últimos 2 ${closingDay()?'ciclos':'meses'} <b class="tnum ${ganho2>=0?'pos':'neg'}">${ganho2>=0?'+':'−'} ${fmt(Math.abs(ganho2))}</b></span>`:`<span style="color:var(--muted)">Toque em Editar pra registrar o patrimônio de cada mês.</span>`}</div></div>`;
   // Composição (donut + barras)
   if(classes.length){
     const filtering=!!patrFilter;
@@ -1282,10 +1282,9 @@ function patrHistSheet(){
   const liquido=ativos-dividas;
   const NC=6, ecyc=[]; let ey=curY, em=curM;
   for(let i=0;i<NC;i++){ ecyc.unshift({m:em,y:ey,key:ey+'-'+String(em+1).padStart(2,'0')}); em--; if(em<0){em=11;ey--;} }
-  const net=ecyc.map(c=>{ let s=0; db.transactions.forEach(tx=>{ if(cycleKey(tx.date)===c.key) s+= tx.type==='income'?tx.amount:-tx.amount; }); return s; });
   const nw=new Array(NC);
-  nw[NC-1]=db.patrHist[ecyc[NC-1].key]!=null?db.patrHist[ecyc[NC-1].key]:liquido;
-  for(let i=NC-2;i>=0;i--){ nw[i]=db.patrHist[ecyc[i].key]!=null?db.patrHist[ecyc[i].key]:(nw[i+1]-net[i+1]); }
+  nw[NC-1]=liquido;
+  for(let i=NC-2;i>=0;i--){ nw[i]=db.patrHist[ecyc[i].key]!=null?db.patrHist[ecyc[i].key]:nw[i+1]; }
   const past=ecyc.slice(0,NC-1);   // meses passados (o atual é calculado)
   const rows=past.map((c,i)=>`<div class="field"><label>${MONTHS[c.m]} ${c.y}</label><input type="text" class="hist-in" data-key="${c.key}" inputmode="numeric" placeholder="0,00"></div>`).join('');
   openSheet(`
