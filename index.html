@@ -100,6 +100,13 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 .donut-box{position:relative; width:132px; height:132px;}
 .donut-box svg circle{transition:stroke-dasharray .4s ease;}
 .donut-center{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;}
+/* Início dashboard: fluxo e donut são exclusivos do desktop (mobile fica igual) */
+.panel-flow{display:none;}
+.io-donut{display:none;}
+/* Gráfico de linha (evolução) */
+.lc svg{width:100%; height:150px; display:block;}
+.lc-lbls{display:flex; justify-content:space-between; margin-top:6px; font-size:10.5px; color:var(--muted);}
+.tnum.pos{color:var(--pos);} .tnum.neg{color:var(--neg);}
 .donut-lbl{font-size:10px; color:var(--muted); font-weight:600; letter-spacing:.09em; text-transform:uppercase;}
 .donut-val{font-size:16px; font-weight:700; margin-top:2px;}
 .pamt{display:flex; flex-direction:column; align-items:flex-end; gap:2px;}
@@ -254,7 +261,7 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 /* ===== DESKTOP (>=900px): barra de baixo vira menu lateral, conteudo ganha largura ===== */
 @media (min-width:900px){
   /* faixa central: o app inteiro (sidebar + conteúdo) centraliza numa largura máxima, margens iguais dos 2 lados */
-  :root{ --gut: max(0px, (100vw - 1480px)/2); }
+  :root{ --gut: max(0px, (100vw - 1640px)/2); }
   .tabbar{ position:fixed; top:0; bottom:0; left:var(--gut); right:auto; width:236px; max-width:236px; margin:0;
     flex-direction:column; justify-content:flex-start; align-items:stretch; gap:4px;
     padding:24px 14px; border-top:none; border-right:.8px solid var(--border); overflow-y:auto; }
@@ -286,6 +293,29 @@ input,select,textarea{font-family:inherit; font-size:16px;}
   #chatBar input{ max-width:760px; }
   #chatLog{ max-width:840px; margin:0 auto; }
   .sheet{ max-width:460px; left:auto; right:calc(var(--gut) + 44px); }
+  /* ===== Início como dashboard: KPIs + cards + fluxo + donut ===== */
+  .kpirow{ display:grid; grid-template-columns:1.5fr 1fr 1fr; gap:16px; align-items:stretch; margin-bottom:18px; }
+  .kpirow .tiles{ display:contents; }
+  .kpirow .hero{ margin:0; padding:20px 22px; background:var(--surface); border:.8px solid var(--border); border-radius:var(--r-card); display:flex; flex-direction:column; justify-content:center; gap:2px; }
+  .kpirow .hero .val{ font-size:30px; }
+  .kpirow .tile{ display:flex; flex-direction:column; justify-content:center; }
+  .card-chips{ margin:0 0 18px; }
+  .ins-group{ margin-bottom:18px; }
+  .ins-group .sec-title{ margin:0 2px 12px; }
+  .ins-list{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .ins-list .insight{ margin:0; }
+  .board-grid{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; align-items:start; }
+  .board-col{ display:flex; flex-direction:column; gap:20px; min-width:0; }
+  .panel{ background:var(--surface); border:.8px solid var(--border); border-radius:var(--r-card); padding:18px 20px; }
+  .panel .sec-title{ margin:0 0 14px; }
+  .panel-flow{ display:block; }
+  .panel-flow .es-chart{ height:150px; }
+  .io-donut{ display:flex; }
+  .panel .tx{ margin:0 -6px; padding:9px 6px; border-radius:10px; }
+  .panel .tx:hover{ background:var(--surface-2); }
+  .panel .cbar[role="button"]:hover{ background:var(--surface-2); }
+  .panel .day-head:first-of-type{ margin-top:2px; }
+  .panel-tx .tx-search{ margin-bottom:14px; }
 }
 #chatBar input{flex:1; padding:12px 14px; border:.8px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text); outline:none;}
 #chatBar input:focus{border-color:var(--brand); box-shadow:var(--focus);}
@@ -512,12 +542,28 @@ function renderInicio(){
   // category breakdown (expenses)
   const byCat={};
   txInMonth().forEach(x=>{ if(x.type==='expense' && x.categoryId!=='c_aporte'){ byCat[x.categoryId]=(byCat[x.categoryId]||0)+x.amount; }});
-  const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const catsAll=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  const cats=catsAll.slice(0,5);
   const maxCat=cats.length?cats[0][1]:1;
+  const totalGastos=catsAll.reduce((s,e)=>s+e[1],0);
+  // donut (desktop): top 6 + "Outros"
+  let donutEntries=catsAll.slice(0,6);
+  const restoV=catsAll.slice(6).reduce((s,e)=>s+e[1],0);
+  if(restoV>0) donutEntries=donutEntries.concat([['__outros__',restoV]]);
+  const catColor=cid=> cid==='__outros__'?'#6A7686':((catById(cid)||{color:'#6A7686'}).color);
+  // fluxo: últimos 6 ciclos (mesma régua do fechamento)
+  const N=6, cyc=[]; let fy=curY, fm=curM;
+  for(let i=0;i<N;i++){ cyc.unshift({m:fm,key:fy+'-'+String(fm+1).padStart(2,'0')}); fm--; if(fm<0){fm=11;fy--;} }
+  const agg=cyc.map(c=>{ let inc=0,exp=0; db.transactions.forEach(tx=>{ if(cycleKey(tx.date)===c.key){ if(tx.type==='income') inc+=tx.amount; else exp+=tx.amount; } }); return {m:c.m,inc,exp}; });
+  const maxV=Math.max(1,...agg.map(a=>Math.max(a.inc,a.exp)));
+  // filtro só vale se a categoria existe nos gastos do mês
+  if(homeFilter && !byCat[homeFilter]) homeFilter=null;
 
-  let html=`
-    <div class="dash"><div class="dash-main">
-    <div class="hero">
+  let html=`<div class="board">`;
+
+  // KPIs
+  html+=`<div class="kpirow">
+    <div class="hero kpi">
       <div class="lbl">${closingDay()?'Saldo da fatura':'Saldo do mês'}</div>
       <div class="val tnum">${fmt(t.bal)}</div>
       <div class="sub">${list.length} lançamento${list.length===1?'':'s'}${closingDay()?' · '+cycleRange():' em '+MONTHS[curM].toLowerCase()}</div>
@@ -525,7 +571,8 @@ function renderInicio(){
     <div class="tiles">
       <div class="tile pos"><div class="lbl">Entrou</div><div class="v tnum">${fmt(t.inc)}</div></div>
       <div class="tile neg"><div class="lbl">Saiu</div><div class="v tnum">${fmt(t.exp)}</div></div>
-    </div>`;
+    </div>
+  </div>`;
 
   const cards=cardsInCycle();
   if(cards.length>=2){
@@ -533,28 +580,36 @@ function renderInicio(){
   }
 
   const ins=insights();
-  if(ins.length){ html+=`<div class="sec-title">Insights</div>`; ins.forEach(x=>{ html+=`<div class="insight ins-${x.level}">${x.text}</div>`; }); }
+  if(ins.length){ html+=`<div class="ins-group"><div class="sec-title">Insights</div><div class="ins-list">${ins.map(x=>`<div class="insight ins-${x.level}">${x.text}</div>`).join('')}</div></div>`; }
 
-  // filtro só vale se a categoria existe nos gastos do mês
-  if(homeFilter && !byCat[homeFilter]) homeFilter=null;
+  html+=`<div class="board-grid"><div class="board-col board-main">`;
 
+  // Fluxo (desktop-only)
+  html+=`<div class="panel panel-flow"><div class="sec-title">Fluxo · ${N} ciclos</div><div class="es-chart">`;
+  agg.forEach(a=>{ const ih=Math.round(a.inc/maxV*100), eh=Math.round(a.exp/maxV*100);
+    html+=`<div class="es-col"><div class="es-bars"><i class="es-in" style="height:${a.inc?Math.max(2,ih):0}%"></i><i class="es-out" style="height:${a.exp?Math.max(2,eh):0}%"></i></div><div class="es-lbl">${MONTHS_SHORT[a.m]}</div></div>`; });
+  html+=`</div><div class="es-legend"><span><i class="dot" style="background:var(--pos)"></i>Entradas</span><span><i class="dot" style="background:var(--neg)"></i>Saídas</span></div></div>`;
+
+  // Para onde foi (donut desktop-only + barras)
   if(cats.length){
     const filtering=!!homeFilter;
-    html+=`<div class="sec-title">Para onde foi${filtering?'<span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:600"> · toque pra filtrar</span>':''}</div><div class="cat-bars${filtering?' filtering':''}">`;
+    html+=`<div class="panel panel-breakdown"><div class="sec-title">Para onde foi${filtering?'<span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:600"> · toque pra filtrar</span>':''}</div>`;
+    html+=`<div class="donut-wrap io-donut"><div class="donut-box">${donut(donutEntries,totalGastos,132,catColor)}<div class="donut-center"><div class="donut-lbl">Gastos</div><div class="donut-val tnum">${fmtShort(totalGastos)}</div></div></div></div>`;
+    html+=`<div class="cat-bars${filtering?' filtering':''}">`;
     cats.forEach(([cid,val])=>{
       const c=catById(cid)||{name:'Outros',color:'#6A7686'};
-      html+=`<div class="cbar${cid===homeFilter?' on':''}" data-catbar="${cid}" role="button" tabindex="0">
-        <div class="row"><span class="nm"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span><span class="tnum">${fmt(val)}</span></div>
-        <div class="track"><i style="width:${Math.max(6,Math.round(val/maxCat*100))}%;background:${c.color}"></i></div>
-      </div>`;
+      html+=`<div class="cbar${cid===homeFilter?' on':''}" data-catbar="${cid}" role="button" tabindex="0"><div class="row"><span class="nm"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span><span class="tnum">${fmt(val)}</span></div><div class="track"><i style="width:${Math.max(6,Math.round(val/maxCat*100))}%;background:${c.color}"></i></div></div>`;
     });
-    html+=`</div>`;
+    html+=`</div></div>`;
   }
 
+  html+=`</div>`; // board-main
+
+  // Lançamentos (coluna direita)
   const fcat = homeFilter ? (catById(homeFilter)||{name:'Categoria'}) : null;
   const shown = homeFilter ? list.filter(x=>x.categoryId===homeFilter) : list;
   const shownTotal = shown.reduce((s,x)=>s+x.amount,0);
-  html+=`</div><div class="dash-side">`;
+  html+=`<div class="board-col board-side"><div class="panel panel-tx">`;
   html+=`<div class="sec-title">${fcat?esc(fcat.name)+`<button id="clearFilter">Ver todos</button>`:'Lançamentos'}</div>`;
   if(fcat) html+=`<div style="font-size:12.5px;color:var(--muted);margin:-6px 2px 12px">${shown.length} lançamento${shown.length===1?'':'s'} · ${fmt(shownTotal)}</div>`;
   if(list.length>5) html+=`<input id="txSearch" class="tx-search" placeholder="Buscar lançamento" autocomplete="off">`;
@@ -563,10 +618,7 @@ function renderInicio(){
   }else{
     let lastDay='';
     shown.forEach(x=>{
-      if(x.date!==lastDay){
-        lastDay=x.date;
-        html+=`<div class="day-head">${dayLabel(x.date)}</div>`;
-      }
+      if(x.date!==lastDay){ lastDay=x.date; html+=`<div class="day-head">${dayLabel(x.date)}</div>`; }
       const c=catById(x.categoryId)||{name:'Sem categoria',color:'#6A7686'};
       const sign=x.type==='income'?'+':'−';
       html+=`<button class="tx" data-tx="${x.id}">
@@ -576,7 +628,8 @@ function renderInicio(){
       </button>`;
     });
   }
-  html+=`</div></div>`;
+  html+=`</div></div>`; // panel-tx, board-side
+  html+=`</div></div>`; // board-grid, board
   $('#scr-inicio').innerHTML=html;
 }
 
@@ -767,35 +820,45 @@ function renderRelatorios(){
   const agg=cyc.map(c=>{ let inc=0,exp=0; db.transactions.forEach(t=>{ if(cycleKey(t.date)===c.key){ if(t.type==='income') inc+=t.amount; else exp+=t.amount; } }); return {m:c.m, inc, exp}; });
   const maxV=Math.max(1, ...agg.map(a=>Math.max(a.inc,a.exp)));
   const atual=agg[N-1];
-  let html=`<div class="dash"><div class="dash-main">`;
-  html+=`<div class="hero"><div class="lbl">Entradas × Saídas</div><div class="val tnum">${fmt(atual.inc-atual.exp)}</div><div class="sub">saldo do ${closingDay()?'ciclo':'mês'} atual · últimos ${N} ${closingDay()?'ciclos':'meses'}</div></div>`;
-  html+=`<div class="es-chart">`;
+  const tin=agg.reduce((s,a)=>s+a.inc,0), tout=agg.reduce((s,a)=>s+a.exp,0);
+  const per=closingDay()?'ciclo':'mês';
+
+  let html=`<div class="board">`;
+  html+=`<div class="kpirow">
+    <div class="hero kpi"><div class="lbl">Saldo do ${per}</div><div class="val tnum">${fmt(atual.inc-atual.exp)}</div><div class="sub">Entradas − Saídas · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div></div>
+    <div class="tiles">
+      <div class="tile pos"><div class="lbl">Entradas · ${N} ${per}s</div><div class="v tnum">${fmt(tin)}</div></div>
+      <div class="tile neg"><div class="lbl">Saídas · ${N} ${per}s</div><div class="v tnum">${fmt(tout)}</div></div>
+    </div>
+  </div>`;
+
+  html+=`<div class="board-grid"><div class="board-col board-main">`;
+  html+=`<div class="panel"><div class="sec-title">Entradas × Saídas · ${N} ${per}s</div><div class="es-chart">`;
   agg.forEach(a=>{ const ih=Math.round(a.inc/maxV*100), eh=Math.round(a.exp/maxV*100);
     html+=`<div class="es-col"><div class="es-bars"><i class="es-in" style="height:${a.inc?Math.max(2,ih):0}%"></i><i class="es-out" style="height:${a.exp?Math.max(2,eh):0}%"></i></div><div class="es-lbl">${MONTHS_SHORT[a.m]}</div></div>`; });
+  html+=`</div><div class="es-legend"><span><i class="dot" style="background:var(--pos)"></i>Entradas <b class="tnum">${fmt(tin)}</b></span><span><i class="dot" style="background:var(--neg)"></i>Saídas <b class="tnum">${fmt(tout)}</b></span></div></div>`;
   html+=`</div>`;
-  const tin=agg.reduce((s,a)=>s+a.inc,0), tout=agg.reduce((s,a)=>s+a.exp,0);
-  html+=`<div class="es-legend"><span><i class="dot" style="background:var(--pos)"></i>Entradas <b class="tnum">${fmt(tin)}</b></span><span><i class="dot" style="background:var(--neg)"></i>Saídas <b class="tnum">${fmt(tout)}</b></span></div>`;
-  html+=`</div><div class="dash-side">`;
-  // Gastos por cartao (ciclo atual)
+
+  html+=`<div class="board-col board-side">`;
   const ym=ymOf(), byCard={};
   db.transactions.forEach(t=>{ if(cycleKey(t.date)===ym && t.type==='expense' && t.fonte){ byCard[t.fonte]=(byCard[t.fonte]||0)+t.amount; } });
   const cards=Object.entries(byCard).sort((a,b)=>b[1]-a[1]);
+  html+=`<div class="panel"><div class="sec-title">Gastos por cartão · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div>`;
   if(cards.length){ const maxc=cards[0][1];
-    html+=`<div class="sec-title">Gastos por cartão · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div><div class="cat-bars">`;
+    html+=`<div class="cat-bars">`;
     cards.forEach(([f,v])=>{ html+=`<div class="cbar"><div class="row"><span class="nm">${esc(f)}</span><span class="tnum">${fmt(v)}</span></div><div class="track"><i style="width:${Math.max(6,Math.round(v/maxc*100))}%;background:var(--brand)"></i></div></div>`; });
     html+=`</div>`;
-  } else {
-    html+=`<div class="empty"><b>Sem gastos por cartão neste ${closingDay()?'ciclo':'mês'}</b>Os lançamentos do Open Finance trazem a origem (XP/Nubank) pra cá.</div>`;
-  }
-  // Gastos por etiqueta (ciclo atual)
+  } else { html+=`<div class="empty"><b>Sem gastos por cartão neste ${per}</b>Os lançamentos do Open Finance trazem a origem (XP/Nubank) pra cá.</div>`; }
+  html+=`</div>`;
   const byTag={};
   db.transactions.forEach(t=>{ if(cycleKey(t.date)===ym && t.type==='expense' && Array.isArray(t.tags)){ t.tags.forEach(tg=>{ byTag[tg]=(byTag[tg]||0)+t.amount; }); } });
   const tags=Object.entries(byTag).sort((a,b)=>b[1]-a[1]);
   if(tags.length){ const maxt=tags[0][1];
-    html+=`<div class="sec-title">Gastos por etiqueta · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div><div class="cat-bars">`;
+    html+=`<div class="panel"><div class="sec-title">Gastos por etiqueta · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div><div class="cat-bars">`;
     tags.forEach(([tg,v])=>{ html+=`<div class="cbar"><div class="row"><span class="nm">${esc(tg)}</span><span class="tnum">${fmt(v)}</span></div><div class="track"><i style="width:${Math.max(6,Math.round(v/maxt*100))}%;background:var(--brand)"></i></div></div>`; });
-    html+=`</div>`;
+    html+=`</div></div>`;
   }
+  html+=`</div>`;
   html+=`</div></div>`;
   $('#scr-relatorios').innerHTML=html;
 }
@@ -1049,14 +1112,30 @@ const PATR_CLASSES=[
   {id:'divida',        nome:'Dívida',        cor:'#FF5C6C', passivo:true},
 ];
 const patrClass=id=>PATR_CLASSES.find(c=>c.id===id)||PATR_CLASSES[0];
-function donut(classes, total, size){
+function donut(entries, total, size, colorOf){
+  colorOf = colorOf || (id=>patrClass(id).cor);
   const r=size/2-9, C=2*Math.PI*r, cx=size/2, cy=size/2; let off=0, segs='';
-  classes.forEach(([cid,val])=>{ const c=patrClass(cid); const len=(total>0?val/total:0)*C;
-    segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${c.cor}" stroke-width="10" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+  entries.forEach(([id,val])=>{ const col=colorOf(id); const len=(total>0?val/total:0)*C;
+    segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="10" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
     off+=len; });
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="10"/>${segs}</svg>`;
 }
 
+// Gráfico de linha (área) responsivo. vals = números; labels = rótulos do eixo X.
+function lineChart(vals, labels){
+  const n=vals.length; if(!n) return '';
+  const min=Math.min(...vals), max=Math.max(...vals), range=(max-min)||1;
+  const W=100, H=100, pt=10, pb=10, ih=H-pt-pb;
+  const x=i=> n===1?W/2:(i/(n-1))*W;
+  const y=v=> pt + ih - ((v-min)/range)*ih;
+  const line=vals.map((v,i)=>(i?'L':'M')+x(i).toFixed(2)+' '+y(v).toFixed(2)).join(' ');
+  const area=line+` L ${x(n-1).toFixed(2)} ${H} L 0 ${H} Z`;
+  const lbls=(labels||[]).map(l=>`<span>${esc(l)}</span>`).join('');
+  return `<div class="lc"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${area}" fill="var(--brand)" opacity="0.12"/>
+    <path d="${line}" fill="none" stroke="var(--brand)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg><div class="lc-lbls">${lbls}</div></div>`;
+}
 function patrRow(i){
   const c=patrClass(i.classe); const neg=c.passivo;
   const r=(i.rentab!=null && i.rentab!=='' && !isNaN(i.rentab))?Number(i.rentab):null;
@@ -1082,47 +1161,59 @@ function renderPatrimonio(){
   const maxC=classes.length?classes[0][1]:1;
   if(patrFilter && !byClass[patrFilter]) patrFilter=null;
 
-  let html=`
-    <div class="dash"><div class="dash-main">
-    <div class="hero">
-      <div class="lbl">Patrimônio líquido</div>
-      <div class="val tnum">${fmt(liquido)}</div>
-      <div class="sub">Ativos ${fmt(ativos)} · Dívidas ${fmt(dividas)}</div>
-    </div>`;
+  // evolução: registra snapshot do ciclo atual e monta a série dos últimos 6 ciclos.
+  // Onde há snapshot real usa ele; onde não há (passado), reconstrói do resultado mensal (ganho).
+  db.patrHist = db.patrHist || {};
+  db.patrHist[ymOf()] = liquido;
+  const NC=6, ecyc=[]; let ey=curY, em=curM;
+  for(let i=0;i<NC;i++){ ecyc.unshift({m:em,key:ey+'-'+String(em+1).padStart(2,'0')}); em--; if(em<0){em=11;ey--;} }
+  const net=ecyc.map(c=>{ let s=0; db.transactions.forEach(tx=>{ if(cycleKey(tx.date)===c.key) s+= tx.type==='income'?tx.amount:-tx.amount; }); return s; });
+  const nw=new Array(NC);
+  nw[NC-1] = db.patrHist[ecyc[NC-1].key]!=null ? db.patrHist[ecyc[NC-1].key] : liquido;
+  for(let i=NC-2;i>=0;i--){ nw[i] = db.patrHist[ecyc[i].key]!=null ? db.patrHist[ecyc[i].key] : (nw[i+1]-net[i+1]); }
+  const elabels=ecyc.map(c=>MONTHS_SHORT[c.m]);
+  const ganho2 = nw[NC-1]-nw[NC-3];
 
+  let html=`<div class="board">`;
+  html+=`<div class="kpirow">
+    <div class="hero kpi"><div class="lbl">Patrimônio líquido</div><div class="val tnum">${fmt(liquido)}</div><div class="sub">Ativos ${fmt(ativos)} · Dívidas ${fmt(dividas)}</div></div>
+    <div class="tiles">
+      <div class="tile pos"><div class="lbl">Ativos</div><div class="v tnum">${fmt(ativos)}</div></div>
+      <div class="tile neg"><div class="lbl">Dívidas</div><div class="v tnum">${fmt(dividas)}</div></div>
+    </div>
+  </div>`;
+
+  html+=`<div class="board-grid"><div class="board-col board-main">`;
+  // Evolução (curva)
+  html+=`<div class="panel"><div class="sec-title">Evolução do patrimônio</div>${lineChart(nw,elabels)}<div class="es-legend" style="margin-top:12px"><span>Últimos 2 ${closingDay()?'ciclos':'meses'} <b class="tnum ${ganho2>=0?'pos':'neg'}">${ganho2>=0?'+':'−'} ${fmt(Math.abs(ganho2))}</b></span></div></div>`;
+  // Composição (donut + barras)
   if(classes.length){
     const filtering=!!patrFilter;
-    html+=`<div class="sec-title">Composição${filtering?'<span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:600"> · toque pra filtrar</span>':''}</div>`;
+    html+=`<div class="panel"><div class="sec-title">Composição${filtering?'<span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:600"> · toque pra filtrar</span>':''}</div>`;
     html+=`<div class="donut-wrap"><div class="donut-box">${donut(classes,ativos,132)}<div class="donut-center"><div class="donut-lbl">Ativos</div><div class="donut-val tnum">${fmtShort(ativos)}</div></div></div></div>`;
     html+=`<div class="cat-bars${filtering?' filtering':''}">`;
     classes.forEach(([cid,val])=>{ const c=patrClass(cid); const pct=ativos>0?Math.round(val/ativos*100):0;
       html+=`<div class="cbar${cid===patrFilter?' on':''}" data-patrbar="${cid}" role="button" tabindex="0"><div class="row"><span class="nm"><span class="dot" style="background:${c.cor}"></span>${esc(c.nome)} <span style="color:var(--muted);font-weight:600">${pct}%</span></span><span class="tnum">${fmt(val)}</span></div><div class="track"><i style="width:${Math.max(4,Math.round(val/maxC*100))}%;background:${c.cor}"></i></div></div>`;
     });
-    html+=`</div>`;
+    html+=`</div></div>`;
   }
+  html+=`</div>`; // board-main
 
-  // ATIVOS
-  html+=`</div><div class="dash-side">`;
-  html+=`<div class="sec-title">Ativos <button id="addAtivo">Adicionar</button></div>`;
+  html+=`<div class="board-col board-side">`;
+  html+=`<div class="panel"><div class="sec-title">Ativos <button id="addAtivo">Adicionar</button></div>`;
   if(patrFilter){ const fc=patrClass(patrFilter);
     html+=`<div style="font-size:12.5px;color:var(--muted);margin:-6px 2px 12px">Só ${esc(fc.nome)} · <button id="clearPatr" style="color:var(--brand);font-weight:600">ver todos</button></div>`;
   }
   const shownAtivos = patrFilter ? ativosItems.filter(i=>i.classe===patrFilter) : ativosItems;
-  if(!shownAtivos.length){
-    html+=`<div class="empty" style="padding:22px 20px"><b>${patrFilter?'Nada nessa classe':'Sem ativos'}</b>${patrFilter?'':'Adicione investimentos, previdência, reserva ou imóveis.'}</div>`;
-  }else{
-    shownAtivos.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); });
-  }
-
-  // DÍVIDAS
-  html+=`<div class="sec-title">Dívidas <button id="addDivida">Adicionar</button></div>`;
-  if(!dividaItems.length){
-    html+=`<div class="empty" style="padding:22px 20px"><b>Sem dívidas</b>Nada devendo por aqui.</div>`;
-  }else{
-    dividaItems.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); });
-  }
-
-  html+=`</div></div>`;
+  if(!shownAtivos.length){ html+=`<div class="empty" style="padding:22px 20px"><b>${patrFilter?'Nada nessa classe':'Sem ativos'}</b>${patrFilter?'':'Adicione investimentos, previdência, reserva ou imóveis.'}</div>`; }
+  else { shownAtivos.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); }); }
+  html+=`</div>`;
+  html+=`<div class="panel"><div class="sec-title">Dívidas <button id="addDivida">Adicionar</button></div>`;
+  if(!dividaItems.length){ html+=`<div class="empty" style="padding:22px 20px"><b>Sem dívidas</b>Nada devendo por aqui.</div>`; }
+  else { dividaItems.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); }); }
+  html+=`</div>`;
+  html+=`</div>`; // board-side
+  html+=`</div></div>`; // board-grid, board
   $('#scr-patrimonio').innerHTML=html;
 }
 
