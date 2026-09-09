@@ -760,6 +760,7 @@ function renderAjustes(){
     <div class="list">
       <button class="item" id="exportBtn"><div class="t">Exportar backup<small>Salva um arquivo .json com tudo (${nTx} lançamentos, ${nBills} contas)</small></div><span class="chev">↓</span></button>
       <button class="item" id="importBtn"><div class="t">Importar backup<small>Restaura os dados de um arquivo salvo</small></div><span class="chev">↑</span></button>
+      <button class="item" id="posBtn"><div class="t">Importar posições<small>Adiciona/atualiza patrimônio, dívidas e histórico de um arquivo. NÃO apaga seus lançamentos.</small></div><span class="chev">↑</span></button>
     </div>
     <div class="sec-title">Nuvem</div>
     <div class="list">
@@ -787,7 +788,8 @@ function renderAjustes(){
     <div class="foot">Minhas Finanças · versão 1.0<br>${cloudFlag?'Sincronizado com a sua nuvem. Os dados ficam no seu servidor e neste aparelho.':'Todos os dados ficam salvos apenas neste aparelho.'}</div>
     <input type="file" id="importFile" accept="application/json,.json" class="hidden">
     <input type="file" id="faturaFile" accept="application/pdf,.pdf" class="hidden">
-    <input type="file" id="extratoFile" accept=".ofx,.csv,text/csv,application/x-ofx,application/vnd.intu.qfx" class="hidden">`;
+    <input type="file" id="extratoFile" accept=".ofx,.csv,text/csv,application/x-ofx,application/vnd.intu.qfx" class="hidden">
+    <input type="file" id="posFile" accept="application/json,.json" class="hidden">`;
   $('#scr-ajustes').innerHTML=html;
 }
 
@@ -2113,6 +2115,32 @@ function importBackup(file){
   };
   r.readAsText(file);
 }
+// Importa posições (patrimônio/dívidas/a receber + histórico + recorrências) FUNDINDO com o que já existe.
+// Não substitui o banco: só adiciona/atualiza por id. Lançamentos e ajustes ficam intactos.
+function importPosicoes(file){
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const obj=JSON.parse(r.result);
+      let addP=0, updP=0, addB=0, histN=0;
+      if(Array.isArray(obj.patrimonio)){
+        db.patrimonio=db.patrimonio||[];
+        const by={}; db.patrimonio.forEach(p=>{ if(p&&p.id) by[p.id]=p; });
+        obj.patrimonio.forEach(it=>{ if(!it||!it.id) return; if(by[it.id]){ Object.assign(by[it.id],it); updP++; } else { db.patrimonio.push(it); by[it.id]=it; addP++; } });
+      }
+      if(obj.patrHist && typeof obj.patrHist==='object'){ const before=Object.keys(db.patrHist||{}).length; db.patrHist=Object.assign({}, db.patrHist||{}, obj.patrHist); histN=Object.keys(db.patrHist).length-before; }
+      if(Array.isArray(obj.bills)){
+        db.bills=db.bills||[];
+        const byb={}; db.bills.forEach(b=>{ if(b&&b.id) byb[b.id]=b; });
+        obj.bills.forEach(it=>{ if(!it||!it.id) return; if(!byb[it.id]){ db.bills.push(it); byb[it.id]=it; addB++; } });
+      }
+      if(!addP&&!updP&&!addB&&!histN){ alert('Nada pra importar nesse arquivo.'); return; }
+      save(); renderAll();
+      alert(`Importado: ${addP} posição(ões) nova(s), ${updP} atualizada(s)${addB?`, ${addB} recorrência(s)`:''}${histN>0?`, ${histN} mês(es) de histórico`:''}. Nada foi apagado.`);
+    }catch(e){ alert('Arquivo inválido. Use um arquivo de posições gerado pra você.'); }
+  };
+  r.readAsText(file);
+}
 
 /* ---------- EVENTS ---------- */
 $('#prevM').addEventListener('click',()=>{ curM--; if(curM<0){curM=11;curY--;} homeFilter=null; cardFilter=null; renderAll(); });
@@ -2169,6 +2197,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#editBud')){ budgetSheet(); return; }
   if(e.target.closest('#exportBtn')){ exportBackup(); return; }
   if(e.target.closest('#importBtn')){ $('#importFile').click(); return; }
+  if(e.target.closest('#posBtn')){ $('#posFile').click(); return; }
   if(e.target.closest('#faturaBtn')){ $('#faturaFile').click(); return; }
   if(e.target.closest('#extratoBtn')){ $('#extratoFile').click(); return; }
   if(e.target.closest('#cloudBtn')){ cloudSheet(); return; }
@@ -2184,6 +2213,7 @@ $('#app').addEventListener('change',e=>{
   if(e.target.id==='importFile' && e.target.files[0]){ importBackup(e.target.files[0]); e.target.value=''; }
   if(e.target.id==='faturaFile' && e.target.files[0]){ importFatura(e.target.files[0]); e.target.value=''; }
   if(e.target.id==='extratoFile' && e.target.files[0]){ importExtrato(e.target.files[0]); e.target.value=''; }
+  if(e.target.id==='posFile' && e.target.files[0]){ importPosicoes(e.target.files[0]); e.target.value=''; }
 });
 
 renderAll();
