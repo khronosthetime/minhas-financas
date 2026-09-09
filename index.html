@@ -253,14 +253,16 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 
 /* ===== DESKTOP (>=900px): barra de baixo vira menu lateral, conteudo ganha largura ===== */
 @media (min-width:900px){
-  .tabbar{ position:fixed; top:0; bottom:0; left:0; right:auto; width:236px; max-width:236px; margin:0;
+  /* faixa central: o app inteiro (sidebar + conteúdo) centraliza numa largura máxima, margens iguais dos 2 lados */
+  :root{ --gut: max(0px, (100vw - 1480px)/2); }
+  .tabbar{ position:fixed; top:0; bottom:0; left:var(--gut); right:auto; width:236px; max-width:236px; margin:0;
     flex-direction:column; justify-content:flex-start; align-items:stretch; gap:4px;
     padding:24px 14px; border-top:none; border-right:.8px solid var(--border); overflow-y:auto; }
   .side-brand{ display:block; font-size:13px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); padding:6px 14px 18px; }
   .tab{ flex:0 0 auto; flex-direction:row; justify-content:flex-start; gap:13px; font-size:14px; letter-spacing:.01em; padding:12px 14px; border-radius:10px; white-space:nowrap; }
   .tab svg{ width:20px; height:20px; }
   .tab.active{ background:color-mix(in srgb, var(--brand) 13%, transparent); color:var(--brand); }
-  #app{ max-width:none; margin:0; padding:0 0 0 236px; }
+  #app{ max-width:none; margin:0; padding:0 var(--gut) 0 calc(var(--gut) + 236px); }
   .topbar{ padding-left:44px; padding-right:44px; }
   .topbar h1{ display:none; }
   .top-row{ justify-content:flex-end; gap:14px; }
@@ -270,7 +272,7 @@ input,select,textarea{font-family:inherit; font-size:16px;}
   #app:has(.screen[data-name="chat"].active) #addTop,
   #app:has(.screen[data-name="patrimonio"].active) #addTop{ display:none; }
   .month-nav{ justify-content:flex-start; gap:14px; }
-  .screen{ max-width:1180px; margin:0 auto; padding:26px 44px 90px; }
+  .screen{ max-width:none; margin:0; padding:26px 48px 96px; }
   .fab{ display:none!important; }
   /* dashboard de 2 colunas: resumo à esquerda, listas/detalhe à direita */
   .dash{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.12fr); gap:38px; align-items:start; }
@@ -280,10 +282,10 @@ input,select,textarea{font-family:inherit; font-size:16px;}
   .cbar[role="button"]:hover{ background:var(--surface); }
   .bill:hover, .bud:hover, .item:hover{ background:var(--surface-2); }
   /* chat: coluna confortável e centralizada */
-  #chatBar{ left:236px; right:0; max-width:none; margin:0; padding-left:44px; padding-right:44px; justify-content:center; }
+  #chatBar{ left:calc(var(--gut) + 236px); right:var(--gut); max-width:none; margin:0; padding-left:48px; padding-right:48px; justify-content:center; }
   #chatBar input{ max-width:760px; }
-  #chatLog{ max-width:820px; margin:0 auto; }
-  .sheet{ max-width:460px; left:auto; right:44px; }
+  #chatLog{ max-width:840px; margin:0 auto; }
+  .sheet{ max-width:460px; left:auto; right:calc(var(--gut) + 44px); }
 }
 #chatBar input{flex:1; padding:12px 14px; border:.8px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text); outline:none;}
 #chatBar input:focus{border-color:var(--brand); box-shadow:var(--focus);}
