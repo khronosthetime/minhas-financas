@@ -851,12 +851,18 @@ function stripDatesNorm(s){
     .replace(/\bdia\s+\d{1,2}\b/g,' ')
     .replace(/\b(?:hoje|ontem)\b/g,' ');
 }
-function parseChatEntry(text){
-  const t0=NORM(text);
-  const isIncome=['recebi','ganhei','entrou','recebimento','recebido','caiu','salario','pix recebido'].some(w=>t0.includes(w));
-  const date=chatRelDate(t0);
+const RE_VALOR=/(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)/;
+const CHAT_INCOME_WORDS=['recebi','ganhei','entrou','recebimento','recebido','caiu','salario','pix recebido'];
+function segIsIncome(tn){ return CHAT_INCOME_WORDS.some(w=>tn.includes(w)); }
+function segHasExpVerb(tn){ return /\b(gastei|gasto|gastar|paguei|pagar|comprei|comprar)\b/.test(tn); }
+function hasDatePhrase(tn){ return tn!==stripDatesNorm(tn); }
+// Lê UM lançamento de um trecho. isIncome vem decidido de fora; fallbackDate é a data
+// da frase toda (usada quando o trecho não traz data própria).
+function parseSegment(seg, isIncome, fallbackDate){
+  const t0=NORM(seg);
+  const date=hasDatePhrase(t0)?chatRelDate(t0):(fallbackDate||chatRelDate(t0));
   const t=stripDatesNorm(t0);            // sem a data: valor e categoria olham só o resto
-  const m=t.match(/(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
+  const m=t.match(RE_VALOR);
   if(!m) return null;
   const num=m[1];
   let val;
@@ -864,8 +870,8 @@ function parseChatEntry(text){
   else val=parseFloat(num.replace(',','.'));
   if(isNaN(val)||val<=0) return null;
   const cents=Math.round(val*100);
-  // descrição: parte do texto original (mantém acento/caixa), sem valor, sem data, sem palavras de comando
-  let desc=text.replace(m[0],' ').replace(/r\$/ig,' ');
+  // descrição: parte do trecho original (mantém acento/caixa), sem valor, sem data, sem palavras de comando
+  let desc=seg.replace(m[0],' ').replace(/r\$/ig,' ');
   desc=desc
     .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g,' ')
     .replace(/\bantes de ontem\b|\banteontem\b/ig,' ')
@@ -883,24 +889,49 @@ function parseChatEntry(text){
   const name=nomeChat(desc)||(catById(catId)||{name:'Lançamento'}).name;
   return {type:isIncome?'income':'expense', cents, catId, date, name};
 }
+// Lê UM ou VÁRIOS lançamentos de uma frase. Só divide quando há 2+ valores
+// (senão "café e pão 20" continuaria um só). A divisão respeita vírgula decimal.
+function parseChatEntries(text){
+  const globalDate=chatRelDate(NORM(text));
+  const semData=stripDatesNorm(NORM(text));
+  const valores=semData.match(new RegExp(RE_VALOR.source,'g'))||[];
+  if(valores.length<=1){
+    const e=parseSegment(text, segIsIncome(NORM(text)), globalDate);
+    return e?[e]:[];
+  }
+  const partes=text.split(/\s+e\s+|\s*;\s*|\s*\+\s*|,(?!\s*\d)/i);
+  const out=[]; let modeIncome=false;
+  for(const parte of partes){
+    const tn=NORM(parte);
+    if(segIsIncome(tn)) modeIncome=true; else if(segHasExpVerb(tn)) modeIncome=false;  // herda o modo do trecho anterior
+    const e=parseSegment(parte, modeIncome, globalDate);
+    if(e) out.push(e);
+  }
+  return out;
+}
 function scrollChat(){ const log=$('#chatLog'); if(log) requestAnimationFrame(()=>window.scrollTo(0,document.body.scrollHeight)); }
 function chatSend(){
   const inp=$('#chatIn'); if(!inp) return; const text=inp.value.trim(); if(!text) return;
   db.chat=db.chat||[];
   db.chat.push({role:'me',text});
-  const p=parseChatEntry(text);
-  if(!p){
-    const r='Não peguei o valor. Tente algo como "gastei 50 no almoço", "uber 25" ou "recebi 3000 de salário".';
+  const entries=parseChatEntries(text);
+  if(!entries.length){
+    const r='Não peguei o valor. Tente algo como "gastei 50 no almoço", "uber 25" ou "mercado 200 e uber 30".';
     db.chat.push({role:'bot',text:r});
   }else{
-    const tx={id:uid(),type:p.type,amount:p.cents,categoryId:p.catId,date:p.date,note:p.name,_o:Date.now(),_m:Date.now(),_chat:1};
-    db.transactions.push(tx);
-    const c=catById(p.catId)||{name:'Outros'};
-    const quando = p.date!==localDate(now)? ' · '+dayLabel(p.date) : '';
-    const r=`${p.type==='income'?'Recebimento':'Gasto'} registrado: ${p.name} · ${c.name} · ${fmt(p.cents)}${quando}`;
-    db.chat.push({role:'bot',text:r,txId:tx.id});
-    const [Y,M]=p.date.split('-').map(Number); curY=Y; curM=M-1;
-    if(p.type==='expense'){ checkGoals(p.catId); pushSync(); }
+    let anyExp=false, lastDate=null;
+    for(const p of entries){
+      const tx={id:uid(),type:p.type,amount:p.cents,categoryId:p.catId,date:p.date,note:p.name,_o:Date.now(),_m:Date.now(),_chat:1};
+      db.transactions.push(tx);
+      const c=catById(p.catId)||{name:'Outros'};
+      const quando = p.date!==localDate(now)? ' · '+dayLabel(p.date) : '';
+      const r=`${p.type==='income'?'Recebimento':'Gasto'} registrado: ${p.name} · ${c.name} · ${fmt(p.cents)}${quando}`;
+      db.chat.push({role:'bot',text:r,txId:tx.id});
+      if(p.type==='expense'){ checkGoals(p.catId); anyExp=true; }
+      lastDate=p.date;
+    }
+    if(lastDate){ const [Y,M]=lastDate.split('-').map(Number); curY=Y; curM=M-1; }
+    if(anyExp) pushSync();
   }
   if(db.chat.length>80) db.chat=db.chat.slice(-80);
   save(); inp.value=''; renderChat(); inp.focus();
@@ -909,7 +940,7 @@ function renderChat(){
   db.chat=db.chat||[];
   let inner;
   if(!db.chat.length){
-    inner=`<div class="chat-empty"><b style="color:var(--text);display:block;margin-bottom:8px;font-size:15px">Registre gastos conversando</b>Escreva como você fala:<br>"gastei 50 no almoço"<br>"uber 25"<br>"mercado 320,50 ontem"<br>"recebi 3000 de salário"</div>`;
+    inner=`<div class="chat-empty"><b style="color:var(--text);display:block;margin-bottom:8px;font-size:15px">Registre gastos conversando</b>Escreva como você fala:<br>"gastei 50 no almoço"<br>"mercado 200 e uber 30"<br>"farmácia 89,90 anteontem"<br>"recebi 3000 de salário"</div>`;
   }else{
     let lastFix=-1;
     db.chat.forEach((m,i)=>{ if(m.txId){ const tx=db.transactions.find(t=>t.id===m.txId); if(tx&&tx.type==='expense') lastFix=i; } });
