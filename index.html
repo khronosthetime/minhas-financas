@@ -1185,7 +1185,7 @@ function renderPatrimonio(){
 
   html+=`<div class="board-grid"><div class="board-col board-main">`;
   // Evolução (curva)
-  html+=`<div class="panel"><div class="sec-title">Evolução do patrimônio</div>${lineChart(nw,elabels)}<div class="es-legend" style="margin-top:12px"><span>Últimos 2 ${closingDay()?'ciclos':'meses'} <b class="tnum ${ganho2>=0?'pos':'neg'}">${ganho2>=0?'+':'−'} ${fmt(Math.abs(ganho2))}</b></span></div></div>`;
+  html+=`<div class="panel"><div class="sec-title">Evolução do patrimônio <button id="editHist">Editar</button></div>${lineChart(nw,elabels)}<div class="es-legend" style="margin-top:12px"><span>Últimos 2 ${closingDay()?'ciclos':'meses'} <b class="tnum ${ganho2>=0?'pos':'neg'}">${ganho2>=0?'+':'−'} ${fmt(Math.abs(ganho2))}</b></span></div></div>`;
   // Composição (donut + barras)
   if(classes.length){
     const filtering=!!patrFilter;
@@ -1244,6 +1244,39 @@ function patrimonioSheet(existing, defClasse){
     if(!valor){ alert('Informe o valor atual.'); return; }
     if(ed){ Object.assign(ed,{nome,classe,valor,aporte,rentab}); }
     else{ db.patrimonio.push({id:uid(),nome,classe,valor,aporte,rentab}); }
+    save(); closeSheet(); renderAll();
+  });
+}
+
+// Editar a curva de evolução: setar o patrimônio líquido no fim de cada mês passado.
+// O mês atual é sempre calculado (ativos − dívidas); só o passado é editável.
+function patrHistSheet(){
+  db.patrHist=db.patrHist||{};
+  const items=db.patrimonio||[];
+  const ativos=items.filter(i=>!patrClass(i.classe).passivo).reduce((s,i)=>s+i.valor,0);
+  const dividas=items.filter(i=>patrClass(i.classe).passivo).reduce((s,i)=>s+i.valor,0);
+  const liquido=ativos-dividas;
+  const NC=6, ecyc=[]; let ey=curY, em=curM;
+  for(let i=0;i<NC;i++){ ecyc.unshift({m:em,y:ey,key:ey+'-'+String(em+1).padStart(2,'0')}); em--; if(em<0){em=11;ey--;} }
+  const net=ecyc.map(c=>{ let s=0; db.transactions.forEach(tx=>{ if(cycleKey(tx.date)===c.key) s+= tx.type==='income'?tx.amount:-tx.amount; }); return s; });
+  const nw=new Array(NC);
+  nw[NC-1]=db.patrHist[ecyc[NC-1].key]!=null?db.patrHist[ecyc[NC-1].key]:liquido;
+  for(let i=NC-2;i>=0;i--){ nw[i]=db.patrHist[ecyc[i].key]!=null?db.patrHist[ecyc[i].key]:(nw[i+1]-net[i+1]); }
+  const past=ecyc.slice(0,NC-1);   // meses passados (o atual é calculado)
+  const rows=past.map((c,i)=>`<div class="field"><label>${MONTHS[c.m]} ${c.y}</label><input type="text" class="hist-in" data-key="${c.key}" inputmode="numeric" placeholder="0,00"></div>`).join('');
+  openSheet(`
+    <div class="sh-head"><button id="shCancel">Cancelar</button><h2>Editar evolução</h2><button id="shSave">Salvar</button></div>
+    <div class="body">
+      <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px">Informe o patrimônio líquido no fim de cada mês. O mês atual (${MONTHS[ecyc[NC-1].m]}) é calculado sozinho pelos seus ativos e dívidas.</p>
+      ${rows}
+      <button class="btn ghost" id="histClear" style="margin-top:6px">Limpar histórico (voltar ao automático)</button>
+    </div>`);
+  const getters={};
+  sheetContent.querySelectorAll('.hist-in').forEach((el,i)=>{ getters[el.dataset.key]=bindMoney(el, nw[i]); });
+  sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
+  sheetContent.querySelector('#histClear').addEventListener('click',()=>{ if(confirm('Apagar os valores salvos e voltar a estimar pelo resultado mensal?')){ past.forEach(c=>{ delete db.patrHist[c.key]; }); save(); closeSheet(); renderAll(); } });
+  sheetContent.querySelector('#shSave').addEventListener('click',()=>{
+    Object.keys(getters).forEach(k=>{ const v=getters[k](); if(v>0) db.patrHist[k]=v; else delete db.patrHist[k]; });
     save(); closeSheet(); renderAll();
   });
 }
@@ -2105,6 +2138,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#clearPatr')){ patrFilter=null; renderPatrimonio(); return; }
   if(e.target.closest('#addAtivo')){ patrimonioSheet(null,'investimentos'); return; }
   if(e.target.closest('#addDivida')){ patrimonioSheet(null,'divida'); return; }
+  if(e.target.closest('#editHist')){ patrHistSheet(); return; }
   if(e.target.closest('#addIn')){ billSheet(null,'in'); return; }
   if(e.target.closest('#addOut')){ billSheet(null,'out'); return; }
   if(e.target.closest('#editBud')){ budgetSheet(); return; }
