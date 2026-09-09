@@ -103,6 +103,9 @@ input,select,textarea{font-family:inherit; font-size:16px;}
 /* Início dashboard: fluxo e donut são exclusivos do desktop (mobile fica igual) */
 .panel-flow{display:none;}
 .io-donut{display:none;}
+/* Subcabeçalho dentro de painel (Em pagamento / Pendente) */
+.mini-head{font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:14px 2px 8px;}
+.mini-head:first-child{margin-top:2px;}
 /* Gráfico de linha (evolução) */
 .lc svg{width:100%; height:150px; display:block;}
 .lc-lbls{display:flex; justify-content:space-between; margin-top:6px; font-size:10.5px; color:var(--muted);}
@@ -1110,6 +1113,7 @@ const PATR_CLASSES=[
   {id:'imovel',        nome:'Imóvel',        cor:'#D1A02E', passivo:false},
   {id:'cripto',        nome:'Cripto',        cor:'#E8804A', passivo:false},
   {id:'divida',        nome:'Dívida',        cor:'#FF5C6C', passivo:true},
+  {id:'receber',       nome:'A receber',     cor:'#9B7EDE', passivo:false, futuro:true},
 ];
 const patrClass=id=>PATR_CLASSES.find(c=>c.id===id)||PATR_CLASSES[0];
 function donut(entries, total, size, colorOf){
@@ -1142,17 +1146,21 @@ function patrRow(i){
   const rline = r!==null ? `<span class="rentab ${r>=0?'up':'down'}">${r>=0?'▲':'▼'} ${Math.abs(r).toFixed(2).replace('.',',')}%</span>` : '';
   return `<button class="tx" data-patr="${i.id}">
     <span class="ic" style="background:${c.cor}">${initials(i.nome)}</span>
-    <span class="mid"><div class="nm">${esc(i.nome)}</div><div class="mt">${esc(c.nome)}${i.aporte? ' · '+fmt(i.aporte)+'/mês':''}</div></span>
+    <span class="mid"><div class="nm">${esc(i.nome)}</div><div class="mt">${esc(c.nome)}${i.aporte? ' · '+fmt(i.aporte)+'/mês':''}${i.status==='pendente'? ' · <span class="sched">pendente</span>':''}</div></span>
     <span class="pamt"><span class="amt tnum" style="${neg?'color:var(--neg)':''}">${neg?'− ':''}${fmt(i.valor)}</span>${rline}</span>
   </button>`;
 }
 function renderPatrimonio(){
   db.patrimonio=db.patrimonio||[];
   const items=db.patrimonio;
-  const ativosItems=items.filter(i=>!patrClass(i.classe).passivo);
-  const dividaItems=items.filter(i=>patrClass(i.classe).passivo);
+  const ativosItems=items.filter(i=>{ const c=patrClass(i.classe); return !c.passivo && !c.futuro; });
+  const receberItems=items.filter(i=>patrClass(i.classe).futuro);
+  const dividaPag=items.filter(i=>patrClass(i.classe).passivo && i.status!=='pendente');
+  const dividaPend=items.filter(i=>patrClass(i.classe).passivo && i.status==='pendente');
   const ativos=ativosItems.reduce((s,i)=>s+i.valor,0);
-  const dividas=dividaItems.reduce((s,i)=>s+i.valor,0);
+  const dividas=dividaPag.reduce((s,i)=>s+i.valor,0);          // só em pagamento entra no líquido
+  const receberTot=receberItems.reduce((s,i)=>s+i.valor,0);
+  const pendTot=dividaPend.reduce((s,i)=>s+i.valor,0);
   const liquido=ativos-dividas;
 
   const byClass={};
@@ -1176,7 +1184,7 @@ function renderPatrimonio(){
 
   let html=`<div class="board">`;
   html+=`<div class="kpirow">
-    <div class="hero kpi"><div class="lbl">Patrimônio líquido</div><div class="val tnum">${fmt(liquido)}</div><div class="sub">Ativos ${fmt(ativos)} · Dívidas ${fmt(dividas)}</div></div>
+    <div class="hero kpi"><div class="lbl">Patrimônio líquido</div><div class="val tnum">${fmt(liquido)}</div><div class="sub">Ativos ${fmt(ativos)} · Dívidas ${fmt(dividas)}${receberTot?` · A receber ${fmt(receberTot)}`:''}${pendTot?` · Pendente ${fmt(pendTot)}`:''}</div></div>
     <div class="tiles">
       <div class="tile pos"><div class="lbl">Ativos</div><div class="v tnum">${fmt(ativos)}</div></div>
       <div class="tile neg"><div class="lbl">Dívidas</div><div class="v tnum">${fmt(dividas)}</div></div>
@@ -1208,9 +1216,18 @@ function renderPatrimonio(){
   if(!shownAtivos.length){ html+=`<div class="empty" style="padding:22px 20px"><b>${patrFilter?'Nada nessa classe':'Sem ativos'}</b>${patrFilter?'':'Adicione investimentos, previdência, reserva ou imóveis.'}</div>`; }
   else { shownAtivos.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); }); }
   html+=`</div>`;
+  // Dívidas: em pagamento (contam no líquido) + pendente (futuro)
   html+=`<div class="panel"><div class="sec-title">Dívidas <button id="addDivida">Adicionar</button></div>`;
-  if(!dividaItems.length){ html+=`<div class="empty" style="padding:22px 20px"><b>Sem dívidas</b>Nada devendo por aqui.</div>`; }
-  else { dividaItems.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); }); }
+  if(!dividaPag.length && !dividaPend.length){ html+=`<div class="empty" style="padding:22px 20px"><b>Sem dívidas</b>Nada devendo por aqui.</div>`; }
+  else {
+    if(dividaPag.length){ if(dividaPend.length) html+=`<div class="mini-head">Em pagamento</div>`; dividaPag.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); }); }
+    if(dividaPend.length){ html+=`<div class="mini-head">Pendente <span style="text-transform:none;letter-spacing:0;font-weight:600;color:var(--muted)">· não entra no líquido</span></div>`; dividaPend.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); }); }
+  }
+  html+=`</div>`;
+  // A receber: entrada futura, não entra no líquido até cair
+  html+=`<div class="panel"><div class="sec-title">A receber <button id="addReceber">Adicionar</button></div>`;
+  if(!receberItems.length){ html+=`<div class="empty" style="padding:22px 20px"><b>Nada a receber</b>Empréstimos ou valores que você vai receber. Não entram no líquido até cair.</div>`; }
+  else { receberItems.slice().sort((a,b)=>b.valor-a.valor).forEach(i=>{ html+=patrRow(i); }); }
   html+=`</div>`;
   html+=`</div>`; // board-side
   html+=`</div></div>`; // board-grid, board
@@ -1220,19 +1237,25 @@ function renderPatrimonio(){
 function patrimonioSheet(existing, defClasse){
   const ed=existing||null;
   let classe=ed?ed.classe:(defClasse||'investimentos');
+  let status=ed&&ed.status?ed.status:'pagando';
   openSheet(`
     <div class="sh-head"><button id="shCancel">Cancelar</button><h2>${ed?'Editar posição':'Nova posição'}</h2><button id="shSave">Salvar</button></div>
     <div class="body">
-      <div class="field"><label>Nome</label><input type="text" id="pName" placeholder="Ex: Tesouro Selic, Previdência XP, Apê" value="${ed?esc(ed.nome):''}" maxlength="40"></div>
+      <div class="field"><label>Nome</label><input type="text" id="pName" placeholder="Ex: Tesouro Selic, Empréstimo Criteria, Carteira Dani" value="${ed?esc(ed.nome):''}" maxlength="40"></div>
       <div class="field"><label>Classe</label><div class="chips" id="pClasses">${PATR_CLASSES.map(c=>`<button class="chip ${c.id===classe?'on':''}" data-pc="${c.id}"><span class="dot" style="background:${c.cor}"></span>${esc(c.nome)}</button>`).join('')}</div></div>
+      <div class="field" id="pStatusField"><label>Situação da dívida</label><div class="chips" id="pStatus"><button class="chip ${status==='pagando'?'on':''}" data-st="pagando">Em pagamento</button><button class="chip ${status==='pendente'?'on':''}" data-st="pendente">Pendente</button></div></div>
       <div class="field"><label>Valor atual</label><input type="text" id="pVal" placeholder="0,00" inputmode="numeric"></div>
-      <div class="field"><label>Aporte mensal (opcional)</label><input type="text" id="pAporte" placeholder="0,00" inputmode="numeric"></div>
+      <div class="field"><label>Aporte / pagamento mensal (opcional)</label><input type="text" id="pAporte" placeholder="0,00" inputmode="numeric"></div>
       <div class="field"><label>Rentabilidade % em 12 meses (opcional)</label><input type="text" id="pRentab" inputmode="decimal" placeholder="Ex: 38,55 ou -5,2" value="${ed&&ed.rentab!=null&&ed.rentab!==''?String(ed.rentab).replace('.',','):''}"></div>
       ${ed?'<button class="btn ghost" id="delBtn">Excluir posição</button>':''}
     </div>`);
   const getVal=bindMoney(sheetContent.querySelector('#pVal'), ed?ed.valor:0);
   const getAp=bindMoney(sheetContent.querySelector('#pAporte'), ed?ed.aporte:0);
-  sheetContent.querySelector('#pClasses').addEventListener('click',e=>{const b=e.target.closest('[data-pc]');if(!b)return;classe=b.dataset.pc;sheetContent.querySelectorAll('#pClasses .chip').forEach(x=>x.classList.toggle('on',x.dataset.pc===classe));});
+  const stField=sheetContent.querySelector('#pStatusField');
+  const syncStatus=()=>{ stField.hidden = classe!=='divida'; };
+  syncStatus();
+  sheetContent.querySelector('#pClasses').addEventListener('click',e=>{const b=e.target.closest('[data-pc]');if(!b)return;classe=b.dataset.pc;sheetContent.querySelectorAll('#pClasses .chip').forEach(x=>x.classList.toggle('on',x.dataset.pc===classe));syncStatus();});
+  sheetContent.querySelector('#pStatus').addEventListener('click',e=>{const b=e.target.closest('[data-st]');if(!b)return;status=b.dataset.st;sheetContent.querySelectorAll('#pStatus .chip').forEach(x=>x.classList.toggle('on',x.dataset.st===status));});
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
   if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{ if(confirm('Excluir esta posição?')){ db.patrimonio=db.patrimonio.filter(p=>p.id!==ed.id); save(); closeSheet(); renderAll(); } });
   sheetContent.querySelector('#shSave').addEventListener('click',()=>{
@@ -1242,8 +1265,9 @@ function patrimonioSheet(existing, defClasse){
     const rentab = (rr!=='' && !isNaN(parseFloat(rr))) ? parseFloat(rr) : null;
     if(!nome){ alert('Dê um nome.'); return; }
     if(!valor){ alert('Informe o valor atual.'); return; }
-    if(ed){ Object.assign(ed,{nome,classe,valor,aporte,rentab}); }
-    else{ db.patrimonio.push({id:uid(),nome,classe,valor,aporte,rentab}); }
+    const pend = classe==='divida' && status==='pendente';
+    if(ed){ Object.assign(ed,{nome,classe,valor,aporte,rentab}); if(pend) ed.status='pendente'; else delete ed.status; }
+    else{ const o={id:uid(),nome,classe,valor,aporte,rentab}; if(pend) o.status='pendente'; db.patrimonio.push(o); }
     save(); closeSheet(); renderAll();
   });
 }
@@ -1253,8 +1277,8 @@ function patrimonioSheet(existing, defClasse){
 function patrHistSheet(){
   db.patrHist=db.patrHist||{};
   const items=db.patrimonio||[];
-  const ativos=items.filter(i=>!patrClass(i.classe).passivo).reduce((s,i)=>s+i.valor,0);
-  const dividas=items.filter(i=>patrClass(i.classe).passivo).reduce((s,i)=>s+i.valor,0);
+  const ativos=items.filter(i=>{ const c=patrClass(i.classe); return !c.passivo && !c.futuro; }).reduce((s,i)=>s+i.valor,0);
+  const dividas=items.filter(i=>patrClass(i.classe).passivo && i.status!=='pendente').reduce((s,i)=>s+i.valor,0);
   const liquido=ativos-dividas;
   const NC=6, ecyc=[]; let ey=curY, em=curM;
   for(let i=0;i<NC;i++){ ecyc.unshift({m:em,y:ey,key:ey+'-'+String(em+1).padStart(2,'0')}); em--; if(em<0){em=11;ey--;} }
@@ -2138,6 +2162,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#clearPatr')){ patrFilter=null; renderPatrimonio(); return; }
   if(e.target.closest('#addAtivo')){ patrimonioSheet(null,'investimentos'); return; }
   if(e.target.closest('#addDivida')){ patrimonioSheet(null,'divida'); return; }
+  if(e.target.closest('#addReceber')){ patrimonioSheet(null,'receber'); return; }
   if(e.target.closest('#editHist')){ patrHistSheet(); return; }
   if(e.target.closest('#addIn')){ billSheet(null,'in'); return; }
   if(e.target.closest('#addOut')){ billSheet(null,'out'); return; }
