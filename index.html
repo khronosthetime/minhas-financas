@@ -856,12 +856,34 @@ const CHAT_INCOME_WORDS=['recebi','ganhei','entrou','recebimento','recebido','ca
 function segIsIncome(tn){ return CHAT_INCOME_WORDS.some(w=>tn.includes(w)); }
 function segHasExpVerb(tn){ return /\b(gastei|gasto|gastar|paguei|pagar|comprei|comprar)\b/.test(tn); }
 function hasDatePhrase(tn){ return tn!==stripDatesNorm(tn); }
+// Parcelas: "3x de 100" (valor POR parcela) vs "300 em 3x" (valor TOTAL). t0 = NORM.
+function parseParcela(t0){
+  let m;
+  if(m=t0.match(/\b(\d{1,2})\s*(?:x|vezes|parcelas?)\s+de\b/)) return {m:+m[1], mode:'per'};
+  if(m=t0.match(/\b(?:em|parcelado em)\s+(\d{1,2})\s*(?:x|vezes|parcelas?)\b/)){ if(+m[1]>=2) return {m:+m[1], mode:'total'}; }
+  if(m=t0.match(/\b(\d{1,2})\s*x\b/)){ if(+m[1]>=2) return {m:+m[1], mode:'total'}; }
+  if(m=t0.match(/\b(\d{1,2})\s+(?:vezes|parcelas)\b/)){ if(+m[1]>=2) return {m:+m[1], mode:'total'}; }
+  return null;
+}
+function stripParcela(s){ return s
+  .replace(/\bparcelado em\b/g,' ')
+  .replace(/\bem\s+\d{1,2}\s*(?:x|vezes|parcelas?)\b/g,' ')
+  .replace(/\b\d{1,2}\s*x\b/g,' ')
+  .replace(/\b\d{1,2}\s+(?:vezes|parcelas?)\b/g,' '); }
+function addMonthsStr(dstr, k){ const [Y,M,D]=dstr.split('-').map(Number); return localDate(new Date(Y, M-1+k, D)); }
 // Lê UM lançamento de um trecho. isIncome vem decidido de fora; fallbackDate é a data
 // da frase toda (usada quando o trecho não traz data própria).
 function parseSegment(seg, isIncome, fallbackDate){
   const t0=NORM(seg);
   const date=hasDatePhrase(t0)?chatRelDate(t0):(fallbackDate||chatRelDate(t0));
-  const t=stripDatesNorm(t0);            // sem a data: valor e categoria olham só o resto
+  // cartão / origem
+  let fonte=null;
+  if(/\bnubank\b|\bnu\b/.test(t0)) fonte='Nubank'; else if(/\bxp\b/.test(t0)) fonte='XP';
+  // etiquetas (#tag) — guarda como digitado (mantém acento/caixa)
+  const tags=[]; (seg.match(/#[^\s#]+/g)||[]).forEach(h=>{ const tg=h.slice(1).replace(/[.,;:!?]+$/,'').trim(); if(tg) tags.push(tg); });
+  // parcelas
+  const parc=parseParcela(t0);
+  const t=stripParcela(stripDatesNorm(t0));   // sem data e sem tokens de parcela: valor olha só o resto
   const m=t.match(RE_VALOR);
   if(!m) return null;
   const num=m[1];
@@ -870,9 +892,14 @@ function parseSegment(seg, isIncome, fallbackDate){
   else val=parseFloat(num.replace(',','.'));
   if(isNaN(val)||val<=0) return null;
   const cents=Math.round(val*100);
-  // descrição: parte do trecho original (mantém acento/caixa), sem valor, sem data, sem palavras de comando
-  let desc=seg.replace(m[0],' ').replace(/r\$/ig,' ');
-  desc=desc
+  // descrição: parte do trecho original (mantém acento/caixa), sem valor, sem etiqueta, sem cartão, sem parcela, sem data, sem palavras de comando
+  let desc=seg.replace(m[0],' ').replace(/r\$/ig,' ')
+    .replace(/#[^\s#]+/g,' ')
+    .replace(/\bnubank\b|\bnu\b|\bxp\b|\bcart[ãa]o\b/ig,' ')
+    .replace(/\bparcelado em\b/ig,' ')
+    .replace(/\bem\s+\d{1,2}\s*(?:x|vezes|parcelas?)\b/ig,' ')
+    .replace(/\b\d{1,2}\s*x\b/ig,' ')
+    .replace(/\b\d{1,2}\s+(?:vezes|parcelas?)\b/ig,' ')
     .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g,' ')
     .replace(/\bantes de ontem\b|\banteontem\b/ig,' ')
     .replace(/\bdepois de amanh[ãa]\b|\bamanh[ãa]\b/ig,' ')
@@ -887,14 +914,24 @@ function parseSegment(seg, isIncome, fallbackDate){
   if(isIncome){ catId=(t0.includes('salario')&&catById('c_salary'))?'c_salary':(db.categories.find(c=>c.type==='income')||{}).id; }
   else { catId=sherlockCat(desc)||chatHint(t)||appCatFor(desc||t); }
   const name=nomeChat(desc)||(catById(catId)||{name:'Lançamento'}).name;
-  return {type:isIncome?'income':'expense', cents, catId, date, name};
+  // valores por parcela (parcela só em despesa)
+  let M=1, perCents=[cents];
+  if(parc && parc.m>=2 && !isIncome){
+    M=Math.min(parc.m,48);
+    if(parc.mode==='per'){ perCents=Array(M).fill(cents); }
+    else { const base=Math.floor(cents/M); const rem=cents-base*M; perCents=[]; for(let i=0;i<M;i++) perCents.push(base+(i<rem?1:0)); }
+  }
+  const e={type:isIncome?'income':'expense', cents, catId, date, name, parc:M, perCents};
+  if(fonte) e.fonte=fonte;
+  if(tags.length) e.tags=tags.slice(0,6);
+  return e;
 }
 // Lê UM ou VÁRIOS lançamentos de uma frase. Só divide quando há 2+ valores
 // (senão "café e pão 20" continuaria um só). A divisão respeita vírgula decimal.
 function parseChatEntries(text){
   const globalDate=chatRelDate(NORM(text));
-  const semData=stripDatesNorm(NORM(text));
-  const valores=semData.match(new RegExp(RE_VALOR.source,'g'))||[];
+  const semRuido=stripParcela(stripDatesNorm(NORM(text)));   // sem data e sem "3x": conta só valores reais
+  const valores=semRuido.match(new RegExp(RE_VALOR.source,'g'))||[];
   if(valores.length<=1){
     const e=parseSegment(text, segIsIncome(NORM(text)), globalDate);
     return e?[e]:[];
@@ -921,12 +958,27 @@ function chatSend(){
   }else{
     let anyExp=false, lastDate=null;
     for(const p of entries){
-      const tx={id:uid(),type:p.type,amount:p.cents,categoryId:p.catId,date:p.date,note:p.name,_o:Date.now(),_m:Date.now(),_chat:1};
-      db.transactions.push(tx);
+      const M=p.parc||1;
+      const pg = M>1 ? uid() : null;   // grupo de parcelas (Desfazer/corrigir mexe no grupo todo)
+      let firstTx=null;
+      for(let k=0;k<M;k++){
+        const tx={id:uid(),type:p.type,amount:p.perCents[k],categoryId:p.catId,date:k===0?p.date:addMonthsStr(p.date,k),note:M>1?`${p.name} (${k+1}/${M})`:p.name,_o:Date.now(),_m:Date.now(),_chat:1};
+        if(k>0) tx._sched=1;
+        if(p.fonte) tx.fonte=p.fonte;
+        if(p.tags) tx.tags=p.tags.slice();
+        if(pg) tx._pg=pg;
+        db.transactions.push(tx);
+        if(k===0) firstTx=tx;
+      }
       const c=catById(p.catId)||{name:'Outros'};
-      const quando = p.date!==localDate(now)? ' · '+dayLabel(p.date) : '';
-      const r=`${p.type==='income'?'Recebimento':'Gasto'} registrado: ${p.name} · ${c.name} · ${fmt(p.cents)}${quando}`;
-      db.chat.push({role:'bot',text:r,txId:tx.id});
+      const extra=`${p.fonte?' · '+p.fonte:''}${p.tags?' · '+p.tags.map(t=>'#'+t).join(' '):''}`;
+      let r;
+      if(M>1){ const total=p.perCents.reduce((a,b)=>a+b,0);
+        r=`${p.type==='income'?'Recebimento':'Gasto'} registrado: ${p.name} · ${c.name} · ${fmt(total)} em ${M}x de ${fmt(p.perCents[0])}${extra}`;
+      }else{ const quando=p.date!==localDate(now)?' · '+dayLabel(p.date):'';
+        r=`${p.type==='income'?'Recebimento':'Gasto'} registrado: ${p.name} · ${c.name} · ${fmt(p.perCents[0])}${extra}${quando}`;
+      }
+      db.chat.push({role:'bot',text:r,txId:firstTx.id});
       if(p.type==='expense'){ checkGoals(p.catId); anyExp=true; }
       lastDate=p.date;
     }
@@ -940,7 +992,7 @@ function renderChat(){
   db.chat=db.chat||[];
   let inner;
   if(!db.chat.length){
-    inner=`<div class="chat-empty"><b style="color:var(--text);display:block;margin-bottom:8px;font-size:15px">Registre gastos conversando</b>Escreva como você fala:<br>"gastei 50 no almoço"<br>"mercado 200 e uber 30"<br>"farmácia 89,90 anteontem"<br>"recebi 3000 de salário"</div>`;
+    inner=`<div class="chat-empty"><b style="color:var(--text);display:block;margin-bottom:8px;font-size:15px">Registre gastos conversando</b>Escreva como você fala:<br>"gastei 50 no almoço"<br>"mercado 200 e uber 30"<br>"tênis 300 em 3x no nubank"<br>"uber 25 #trabalho"</div>`;
   }else{
     let lastFix=-1;
     db.chat.forEach((m,i)=>{ if(m.txId){ const tx=db.transactions.find(t=>t.id===m.txId); if(tx&&tx.type==='expense') lastFix=i; } });
@@ -1905,8 +1957,8 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
 
 // delegated clicks inside screens
 $('#app').addEventListener('click',e=>{
-  const un=e.target.closest('[data-undo]'); if(un){ const id=un.dataset.undo; db.transactions=db.transactions.filter(t=>t.id!==id); save(); un.textContent='Desfeito'; un.style.color='var(--muted)'; un.style.pointerEvents='none'; un.removeAttribute('data-undo'); return; }
-  const fc=e.target.closest('[data-fixcat]'); if(fc){ const wrap=fc.closest('[data-fixtx]'); const id=wrap&&wrap.dataset.fixtx; const tx=db.transactions.find(t=>t.id===id); if(tx){ const cat=fc.dataset.fixcat; if(tx.categoryId!==cat){ tx.categoryId=cat; tx._m=Date.now(); sherlockLearn(tx.note,cat); const bm=db.chat.slice().reverse().find(x=>x.txId===id); if(bm){ const c=catById(cat)||{name:'Outros'}; const quando=tx.date!==localDate(now)?' · '+dayLabel(tx.date):''; bm.text=`Gasto registrado: ${tx.note} · ${c.name} · ${fmt(tx.amount)}${quando}`; } save(); checkGoals(cat); pushSync(); renderChat(); toast('Categoria corrigida e aprendida.'); } } return; }
+  const un=e.target.closest('[data-undo]'); if(un){ const id=un.dataset.undo; const tx=db.transactions.find(t=>t.id===id); const pg=tx&&tx._pg; db.transactions=db.transactions.filter(t=> pg ? t._pg!==pg : t.id!==id); save(); un.textContent='Desfeito'; un.style.color='var(--muted)'; un.style.pointerEvents='none'; un.removeAttribute('data-undo'); return; }
+  const fc=e.target.closest('[data-fixcat]'); if(fc){ const wrap=fc.closest('[data-fixtx]'); const id=wrap&&wrap.dataset.fixtx; const tx=db.transactions.find(t=>t.id===id); if(tx){ const cat=fc.dataset.fixcat; if(tx.categoryId!==cat){ const grp=tx._pg?db.transactions.filter(t=>t._pg===tx._pg):[tx]; grp.forEach(g=>{ g.categoryId=cat; g._m=Date.now(); }); sherlockLearn(tx.note,cat); const bm=db.chat.slice().reverse().find(x=>x.txId===id); if(bm){ const c=catById(cat)||{name:'Outros'}; const ex=tx.fonte?' · '+tx.fonte:''; if(tx._pg){ const total=grp.reduce((a,g)=>a+g.amount,0); const base=(tx.note||'').replace(/\s*\(\d+\/\d+\)\s*$/,''); bm.text=`Gasto registrado: ${base} · ${c.name} · ${fmt(total)} em ${grp.length}x de ${fmt(grp[0].amount)}${ex}`; } else { const quando=tx.date!==localDate(now)?' · '+dayLabel(tx.date):''; bm.text=`Gasto registrado: ${tx.note} · ${c.name} · ${fmt(tx.amount)}${ex}${quando}`; } } save(); checkGoals(cat); pushSync(); renderChat(); toast('Categoria corrigida e aprendida.'); } } return; }
   if(e.target.closest('#clearChat')){ if(confirm('Limpar a conversa? Os lançamentos que você já registrou continuam salvos.')){ db.chat=[]; save(); renderChat(); } return; }
   const cb=e.target.closest('[data-catbar]'); if(cb){ const cid=cb.dataset.catbar; homeFilter = homeFilter===cid?null:cid; renderInicio(); return; }
   const kc=e.target.closest('[data-card]'); if(kc){ cardFilter=kc.dataset.card||null; renderInicio(); return; }
