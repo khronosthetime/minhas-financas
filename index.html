@@ -1400,7 +1400,7 @@ async function enablePush(){
 // O app guarda tudo numa nuvem nossa (Supabase via /api/state). O localStorage
 // vira cache offline; a verdade e o doc versionado no servidor. iPhone e
 // computador compartilham o mesmo dado. So estas chaves sobem (nada de PIN/push).
-const CLOUD_KEYS=['categories','transactions','bills','budgets','patrimonio'];
+const CLOUD_KEYS=['categories','transactions','bills','budgets','patrimonio','patrHist'];
 let cloudDirty=false, cloudBusy=false, cloudTimer=null, cloudLast='';
 function cloudCfg(){ db.settings=db.settings||{}; return db.settings; }
 function cloudOn(){ const s=cloudCfg(); return !!(s.cloudOn && (s.cloudUrl||s.pushServer) && s.cloudSecret && s.cloudAcct); }
@@ -1425,6 +1425,7 @@ function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adi
     db[k]=Object.values(by); });
   if(Array.isArray(doc.categories)){ const by={}; doc.categories.forEach(c=>by[c.id]=c); (db.categories||[]).forEach(c=>by[c.id]=c); db.categories=Object.values(by); }
   if(doc.budgets) db.budgets=Object.assign({}, doc.budgets, db.budgets||{});
+  if(doc.patrHist) db.patrHist=Object.assign({}, doc.patrHist, db.patrHist||{}); // histórico por ciclo: local vence no conflito
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=Object.assign({}, doc.sherlock, db.settings.catMemory||{}); }
 }
 function cloudStatus(state,msg){ cloudLast = state==='ok'?'Sincronizado agora.' : state==='sync'?'Sincronizando...' : ('Erro: '+(msg||'')); const el=document.getElementById('cloudStatusLine'); if(el) el.textContent=cloudLast; if(state==='err') console.warn('[nuvem]',msg); }
