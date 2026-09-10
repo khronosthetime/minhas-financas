@@ -454,6 +454,7 @@ function defaults(){
   return {
     categories:[
       {id:'c_food',name:'Alimentação',color:'#E8804A',type:'expense'},
+      {id:'c_rest',name:'Restaurante/Delivery',color:'#E76F51',type:'expense'},
       {id:'c_market',name:'Mercado',color:'#4A90A4',type:'expense'},
       {id:'c_transp',name:'Transporte',color:'#3B7BB0',type:'expense'},
       {id:'c_home',name:'Moradia',color:'#8A6FB0',type:'expense'},
@@ -479,6 +480,15 @@ function defaults(){
 let db;
 try{ db=JSON.parse(localStorage.getItem(KEY)); }catch(e){ db=null; }
 if(!db||!db.categories){ db=defaults(); }
+// migração: garante categorias novas em apps que já existem (roda no load e após pull da nuvem)
+function ensureCats(){
+  if(!db||!db.categories) return;
+  if(!db.categories.some(c=>c.id==='c_rest')){
+    const i=db.categories.findIndex(c=>c.id==='c_food');
+    db.categories.splice(i>=0?i+1:db.categories.length,0,{id:'c_rest',name:'Restaurante/Delivery',color:'#E76F51',type:'expense'});
+  }
+}
+ensureCats();
 function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ alert('Não foi possível salvar. O armazenamento do navegador pode estar cheio ou bloqueado.'); } cloudSchedulePush(); }
 
 // state
@@ -534,7 +544,7 @@ function insights(){
   const top=Object.entries(byCat).sort((a,b)=>b[1]-a[1])[0];
   if(top && total>0){ const pct=Math.round(top[1]/total*100); if(pct>=35){ const c=catById(top[0])||{name:'essa categoria'}; out.push({level:'info', text:`${pct}% dos seus gastos foram em ${esc(c.name)}.`}); } }
   // comer fora vs mercado
-  const fora=byCat['c_food']||0, merc=byCat['c_market']||0;
+  const fora=(byCat['c_rest']||0)+(byCat['c_food']||0), merc=byCat['c_market']||0;
   if(fora>0 && merc>0){ const pct=Math.round(fora/(fora+merc)*100); if(pct>=65) out.push({level:'info', text:`${pct}% da sua alimentação foi fora de casa.`}); }
   return out.slice(0,3);
 }
@@ -880,7 +890,8 @@ function renderAll(){
 
 /* ================= CHAT DE LANÇAMENTO (local) ================= */
 const CHAT_HINTS=[
-  [['almoco','janta','jantar','lanche','cafe','pizza','hamburguer','ifood','restaurante','padaria','boteco','sushi','churrasco','delivery','marmita'],'c_food'],
+  [['restaurante','ifood','delivery','almoco','janta','jantar','hamburguer','pizza','sushi','churrasco','boteco','bar','marmita','rappi','uber eats','burger','lanchonete'],'c_rest'],
+  [['lanche','cafe','padaria','doceria','sorvete','acai','confeitaria'],'c_food'],
   [['mercado','supermercado','feira','hortifruti','acougue','compras do mes','atacado'],'c_market'],
   [['uber','99','taxi','onibus','metro','gasolina','combustivel','estacionamento','pedagio','passagem','brt','bilhete'],'c_transp'],
   [['luz','agua','aluguel','condominio','gas','faxina','diarista','iptu'],'c_home'],
@@ -1434,6 +1445,7 @@ function cloudReplace(doc){ // servidor autoritativo (pull mais novo)
   if(!doc||typeof doc!=='object') return;
   CLOUD_KEYS.forEach(k=>{ if(doc[k]!==undefined) db[k]=doc[k]; });
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=doc.sherlock; }
+  ensureCats();
 }
 function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adicionado offline
   if(!doc||typeof doc!=='object') return;
@@ -1450,6 +1462,7 @@ function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adi
   if(doc.budgets) db.budgets=Object.assign({}, doc.budgets, db.budgets||{});
   if(doc.patrHist) db.patrHist=Object.assign({}, doc.patrHist, db.patrHist||{}); // histórico por ciclo: local vence no conflito
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=Object.assign({}, doc.sherlock, db.settings.catMemory||{}); }
+  ensureCats();
 }
 function cloudStatus(state,msg){ cloudLast = state==='ok'?'Sincronizado agora.' : state==='sync'?'Sincronizando...' : ('Erro: '+(msg||'')); const el=document.getElementById('cloudStatusLine'); if(el) el.textContent=cloudLast; if(state==='err') console.warn('[nuvem]',msg); }
 async function cloudReq(method,path,body){
@@ -1772,7 +1785,7 @@ const MAPA_CATEGORIAS={
   "Empregados":["diarista","empregada","faxineira","cuidador","baba","omolavanderia","lavanderia","smart home comercio"]
 };
 // categoria do parser -> categoria do app
-const MAP_TO_APP={"Restaurante":"c_food","Alimentação":"c_market","Farmácia":"c_health","Médico/Dentista":"c_health","Combustível":"c_transp","Transporte":"c_transp","Manutenção Veículos":"c_transp","Assinaturas":"c_sub","TV/Internet":"c_sub","Telefone":"c_sub","Esportes/Hobbies":"c_fun","Viagens":"c_fun","Clube":"c_fun","Cuidados com a Beleza":"c_other","Pet":"c_other","Educação":"c_edu","Empregados":"c_home","Diversas":"c_other","A Classificar":"c_other"};
+const MAP_TO_APP={"Restaurante":"c_rest","Alimentação":"c_market","Farmácia":"c_health","Médico/Dentista":"c_health","Combustível":"c_transp","Transporte":"c_transp","Manutenção Veículos":"c_transp","Assinaturas":"c_sub","TV/Internet":"c_sub","Telefone":"c_sub","Esportes/Hobbies":"c_fun","Viagens":"c_fun","Clube":"c_fun","Cuidados com a Beleza":"c_other","Pet":"c_other","Educação":"c_edu","Empregados":"c_home","Diversas":"c_other","A Classificar":"c_other"};
 const SKIP_KEYWORDS=["total desta fatura","total da fatura","total fatura","subtotal","pagamento efetuado","pagamento em ","saldo anterior","credito disponivel","limite de credito","vencimento","valor minimo","valor total","encargos","juros","iof","multa","fatura anterior","saldo devedor","= total","total ="];
 function NORM(s){return (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
 function deveIgnorar(desc){const d=NORM(desc); return SKIP_KEYWORDS.some(k=>d.includes(NORM(k)));}
