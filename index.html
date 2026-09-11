@@ -1542,6 +1542,20 @@ async function cloudPull(){
   }catch(e){ cloudStatus('err',e.message); }
   finally{ cloudBusy=false; }
 }
+// Dispara a sincronização do Open Finance no servidor (não depende do cron da Vercel).
+// Usa o segredo que o app já tem; no máx 1x a cada 4h; se vier gasto novo, puxa de novo.
+let autoSyncBusy=false;
+async function cloudTriggerSync(){
+  if(!cloudOn()||autoSyncBusy) return;
+  const s=cloudCfg(); const base=cloudBase(); if(!base) return;
+  if(Date.now()-(s.lastAutoSync||0) < 4*3600*1000) return;
+  autoSyncBusy=true;
+  try{
+    const r=await fetch(base+'/api/sync',{method:'POST',headers:{'Authorization':'Bearer '+(s.cloudSecret||'')}});
+    if(r.ok){ s.lastAutoSync=Date.now(); cloudSaveLocal(); const j=await r.json().catch(()=>null); if(j && (j.added||j.updated)){ await cloudPull(); } }
+  }catch(e){}
+  finally{ autoSyncBusy=false; }
+}
 function cloudSheet(){
   const s=cloudCfg();
   openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Nuvem</h2><button id="shSave">${s.cloudOn?'Sincronizar':'Ligar'}</button></div><div class="body">
@@ -2303,9 +2317,9 @@ applyPriv();
 if(db.settings && db.settings.pinHash) showLock();
 
 // Nuvem: puxa ao abrir, e re-sincroniza quando volta a internet ou o app volta ao foco.
-window.addEventListener('online', ()=>{ if(cloudOn()) cloudPull(); });
-document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && cloudOn()) cloudPull(); });
-if(cloudOn()) setTimeout(cloudPull, 500);
+window.addEventListener('online', ()=>{ if(cloudOn()){ cloudPull(); cloudTriggerSync(); } });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && cloudOn()){ cloudPull(); cloudTriggerSync(); } });
+if(cloudOn()){ setTimeout(cloudPull, 500); setTimeout(cloudTriggerSync, 1500); }
 })();
 </script>
 <!--ARTIFACT_END-->
