@@ -466,6 +466,8 @@ function defaults(){
       {id:'c_edu',name:'Educação',color:'#2E9E8F',type:'expense'},
       {id:'c_sub',name:'Assinaturas',color:'#7A8794',type:'expense'},
       {id:'c_other',name:'Outros',color:'#6A7686',type:'expense'},
+      {id:'c_mae',name:'Mãe',color:'#C77DB0',type:'expense'},
+      {id:'c_juros',name:'Juros',color:'#A6603C',type:'expense'},
       {id:'c_aporte',name:'Investimento',color:'#28CC95',type:'expense'},
       {id:'c_salary',name:'Salário',color:'#1E8E5A',type:'income'},
       {id:'c_invest',name:'Investimentos',color:'#3B7BB0',type:'income'},
@@ -490,6 +492,9 @@ function ensureCats(){
     const i=db.categories.findIndex(c=>c.id==='c_food');
     db.categories.splice(i>=0?i+1:db.categories.length,0,{id:'c_rest',name:'Restaurante/Delivery',color:'#E76F51',type:'expense'});
   }
+  const i2=db.categories.findIndex(c=>c.id==='c_aporte');
+  if(!db.categories.some(c=>c.id==='c_mae')) db.categories.splice(i2>=0?i2:db.categories.length,0,{id:'c_mae',name:'Mãe',color:'#C77DB0',type:'expense'});
+  if(!db.categories.some(c=>c.id==='c_juros')) db.categories.splice(db.categories.findIndex(c=>c.id==='c_aporte')>=0?db.categories.findIndex(c=>c.id==='c_aporte'):db.categories.length,0,{id:'c_juros',name:'Juros',color:'#A6603C',type:'expense'});
 }
 ensureCats();
 function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ alert('Não foi possível salvar. O armazenamento do navegador pode estar cheio ou bloqueado.'); } cloudSchedulePush(); }
@@ -1493,12 +1498,17 @@ let cloudDirty=false, cloudBusy=false, cloudTimer=null, cloudLast='';
 function cloudCfg(){ db.settings=db.settings||{}; return db.settings; }
 function cloudOn(){ const s=cloudCfg(); return !!(s.cloudOn && (s.cloudUrl||s.pushServer) && s.cloudSecret && s.cloudAcct); }
 function cloudBase(){ const s=cloudCfg(); return (s.cloudUrl||s.pushServer||'').replace(/\/+$/,''); }
-function cloudDoc(){ const d={}; CLOUD_KEYS.forEach(k=>{ d[k]=db[k]; }); d.sherlock=(db.settings&&db.settings.catMemory)||{}; return d; }
+function cloudDoc(){ const d={}; CLOUD_KEYS.forEach(k=>{ d[k]=db[k]; }); d.sherlock=(db.settings&&db.settings.catMemory)||{}; d.ofDeleted=Array.isArray(db.ofDeleted)?db.ofDeleted:[]; return d; }
+// Ids do Open Finance (of_...) que o usuario REMOVEU ou DIVIDIU de proposito.
+// Vai pra nuvem e o /api/sync respeita (nao re-importa). Uniao monotonica: nunca perde.
+function markOfDeleted(id){ if(!id||!/^of_/.test(id)) return; db.ofDeleted=Array.isArray(db.ofDeleted)?db.ofDeleted:[]; if(!db.ofDeleted.includes(id)) db.ofDeleted.push(id); }
+function mergeOfDeleted(doc){ if(doc&&Array.isArray(doc.ofDeleted)) db.ofDeleted=[...new Set([...(Array.isArray(db.ofDeleted)?db.ofDeleted:[]), ...doc.ofDeleted])]; }
 function cloudSaveLocal(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){} } // salva sem re-agendar push
 function cloudReplace(doc){ // servidor autoritativo (pull mais novo)
   if(!doc||typeof doc!=='object') return;
   CLOUD_KEYS.forEach(k=>{ if(doc[k]!==undefined) db[k]=doc[k]; });
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=doc.sherlock; }
+  mergeOfDeleted(doc);
   ensureCats();
 }
 function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adicionado offline
@@ -1516,6 +1526,7 @@ function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adi
   if(doc.budgets) db.budgets=Object.assign({}, doc.budgets, db.budgets||{});
   if(doc.patrHist) db.patrHist=Object.assign({}, doc.patrHist, db.patrHist||{}); // histórico por ciclo: local vence no conflito
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=Object.assign({}, doc.sherlock, db.settings.catMemory||{}); }
+  mergeOfDeleted(doc);
   ensureCats();
 }
 function cloudStatus(state,msg){ cloudLast = state==='ok'?'Sincronizado agora.' : state==='sync'?'Sincronizando...' : ('Erro: '+(msg||'')); const el=document.getElementById('cloudStatusLine'); if(el) el.textContent=cloudLast; if(state==='err') console.warn('[nuvem]',msg); }
@@ -1732,7 +1743,7 @@ function txSheet(existing){
   });
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
   if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{
-    if(confirm('Excluir este lançamento?')){ db.transactions=db.transactions.filter(t=>t.id!==ed.id); save(); closeSheet(); renderAll(); }
+    if(confirm('Excluir este lançamento?')){ markOfDeleted(ed.id); db.transactions=db.transactions.filter(t=>t.id!==ed.id); save(); closeSheet(); renderAll(); }
   });
   if(ed) sheetContent.querySelector('#splitBtn').addEventListener('click',()=>splitSheet(ed));
   sheetContent.querySelector('#shSave').addEventListener('click',()=>{
@@ -1803,6 +1814,7 @@ function splitSheet(ed){
     if(parts.length<2){ alert('Informe pelo menos 2 partes com valor.'); return; }
     const soma=parts.reduce((s,p)=>s+p.amount,0), diff=total-soma;
     if(diff!==0){ alert('As partes somam '+brl(soma)+', mas o total é '+brl(total)+'. '+(diff>0?('Faltam '+brl(diff)):('Sobraram '+brl(-diff)))+'.'); return; }
+    markOfDeleted(ed.id);   // se veio do Open Finance, o sync nao re-importa o original dividido
     db.transactions=db.transactions.filter(t=>t.id!==ed.id);
     parts.forEach((p,i)=>{ const t={id:uid(),type,amount:p.amount,categoryId:p.categoryId,date:ed.date,note:p.note||ed.note||'',_o:Date.now()+i,_m:Date.now()}; if(ed.tags) t.tags=ed.tags.slice(); db.transactions.push(t); if(type==='expense'&&t.note) sherlockLearn(t.note,p.categoryId); });
     save(); closeSheet(); const [Y,M]=ed.date.split('-').map(Number); curY=Y; curM=M-1; renderAll();
@@ -2428,6 +2440,7 @@ $('#app').addEventListener('click',e=>{
     const soma=alvo.reduce((s,t)=>s+t.amount,0);
     if(confirm(`Encontrei ${alvo.length} entrada(s) fantasma somando ${fmt(soma)} (Pix no Crédito lançado como receita). Remover? Não afeta os gastos reais do cartão.`)){
       const ids=new Set(alvo.map(t=>t.id));
+      alvo.forEach(t=>markOfDeleted(t.id));
       db.transactions=db.transactions.filter(t=>!ids.has(t.id));
       save(); renderAll(); if(typeof pushSync==='function') pushSync();
       toast(`Removi ${alvo.length} entrada(s) fantasma (${fmt(soma)}).`);
