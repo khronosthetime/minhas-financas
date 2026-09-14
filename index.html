@@ -849,7 +849,10 @@ function detectSubs(){
   const g={};
   db.transactions.forEach(t=>{
     if(t.type!=='expense' || t.categoryId==='c_aporte') return;
-    const k=sherlockKey(t.note||''); if(!k) return;
+    const note=t.note||'';
+    // Parcela (compra em N vezes) não é assinatura: "08 de 14", "08/14", "8 de 14x", "parcela 3/10"
+    if(/\b\d{1,2}\s*(?:de|\/)\s*\d{1,2}\b/i.test(note) || /parcela/i.test(note)) return;
+    const k=sherlockKey(note); if(!k) return;
     const cyc=cycleKey(t.date);
     const e=g[k]||(g[k]={name:(t.note||'').trim(), occ:[], sub:false, tag:false, cat:t.categoryId});
     e.occ.push({cyc, amt:t.amount});
@@ -1556,6 +1559,20 @@ async function cloudTriggerSync(){
   }catch(e){}
   finally{ autoSyncBusy=false; }
 }
+// Força a sincronização com o banco AGORA (ignora o throttle de 4h), com retorno visível.
+async function cloudSyncNow(){
+  if(!cloudOn()){ toast('Ligue a nuvem primeiro.'); return; }
+  const s=cloudCfg(); const base=cloudBase(); if(!base) return;
+  toast('Sincronizando com o banco... (pode levar alguns segundos)');
+  try{
+    const r=await fetch(base+'/api/sync',{method:'POST',headers:{'Authorization':'Bearer '+(s.cloudSecret||'')}});
+    if(!r.ok){ toast('Erro no sync: HTTP '+r.status); return; }
+    const j=await r.json().catch(()=>({}));
+    s.lastAutoSync=Date.now(); cloudSaveLocal();
+    if(j.added||j.updated){ await cloudPull(); renderAll(); toast('Sincronizado: '+(j.added||0)+' novo(s)'+(j.updated?', '+j.updated+' atualizado(s)':'')+'.'); }
+    else{ toast('Sincronizado — nada novo do banco.'); }
+  }catch(e){ toast('Falha ao sincronizar: '+(e.message||e)); }
+}
 function cloudSheet(){
   const s=cloudCfg();
   openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Nuvem</h2><button id="shSave">${s.cloudOn?'Sincronizar':'Ligar'}</button></div><div class="body">
@@ -1563,7 +1580,8 @@ function cloudSheet(){
     <div class="field"><label>Endereço do servidor</label><input type="text" id="cloudUrlIn" placeholder="https://..." value="${esc(s.cloudUrl||s.pushServer||'https://minhas-financas-push.vercel.app')}"></div>
     <div class="field"><label>Segredo (APP_SECRET)</label><input type="text" id="cloudSecIn" placeholder="cole o segredo" autocomplete="off" value="${esc(s.cloudSecret||'')}"></div>
     <div id="cloudStatusLine" style="font-size:12px;color:var(--muted);margin:4px 0 0;">${s.cloudOn?(cloudLast||'Sincronização ligada.'):'Desligada.'}</div>
-    ${s.cloudOn?'<button id="cloudOffBtn" style="margin-top:18px;color:var(--muted);font-size:13px;">Desligar sincronização neste aparelho</button>':''}
+    ${s.cloudOn?'<button class="btn ghost" id="cloudSyncBtn" style="margin-top:16px;width:100%">Sincronizar agora (Open Finance)</button>':''}
+    ${s.cloudOn?'<button id="cloudOffBtn" style="margin-top:14px;color:var(--muted);font-size:13px;">Desligar sincronização neste aparelho</button>':''}
   </div>`);
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
   sheetContent.querySelector('#shSave').addEventListener('click',async()=>{
@@ -1579,6 +1597,8 @@ function cloudSheet(){
     if(cloudLast.startsWith('Erro')){ toast('Não conectou. '+cloudLast); }
     else { toast('Nuvem ligada e sincronizada.'); renderAll(); }
   });
+  const sb=sheetContent.querySelector('#cloudSyncBtn');
+  if(sb) sb.addEventListener('click',()=>{ sb.disabled=true; sb.textContent='Sincronizando...'; cloudSyncNow().finally(()=>{ sb.disabled=false; sb.textContent='Sincronizar agora (Open Finance)'; }); });
   const off=sheetContent.querySelector('#cloudOffBtn');
   if(off) off.addEventListener('click',()=>{ s.cloudOn=false; cloudSaveLocal(); toast('Sincronização desligada neste aparelho.'); closeSheet(); renderAll(); });
 }
