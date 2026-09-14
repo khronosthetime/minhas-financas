@@ -1668,6 +1668,7 @@ function txSheet(existing){
       <div class="field"><label>Data</label><input type="date" id="dateIn" value="${ed?ed.date:localDate(now)}"></div>
       <div class="field"><label>Observação</label><input type="text" id="noteIn" placeholder="Opcional" value="${ed?esc(ed.note||''):''}" maxlength="60"></div>
       <div class="field"><label>Etiquetas (separadas por vírgula)</label><input type="text" id="tagsIn" placeholder="ex: viagem, reembolsável" value="${ed&&ed.tags?esc(ed.tags.join(', ')):''}" maxlength="80"></div>
+      ${ed?'<button class="btn ghost" id="splitBtn" style="margin-top:10px">Dividir em partes</button>':''}
       ${ed?'<button class="btn ghost" id="delBtn">Excluir lançamento</button>':''}
     </div>`;
   openSheet(html);
@@ -1694,6 +1695,7 @@ function txSheet(existing){
   if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{
     if(confirm('Excluir este lançamento?')){ db.transactions=db.transactions.filter(t=>t.id!==ed.id); save(); closeSheet(); renderAll(); }
   });
+  if(ed) sheetContent.querySelector('#splitBtn').addEventListener('click',()=>splitSheet(ed));
   sheetContent.querySelector('#shSave').addEventListener('click',()=>{
     const amount=getAmt();
     if(!amount){ alert('Informe um valor.'); return; }
@@ -1708,6 +1710,52 @@ function txSheet(existing){
     const [Y,M]=date.split('-').map(Number); curY=Y; curM=M-1;
     renderAll();
     if(type==='expense'){ checkGoals(catId); pushSync(); }
+  });
+}
+
+/* ---------- DIVIDIR LANÇAMENTO EM PARTES ---------- */
+function splitSheet(ed){
+  const total=ed.amount, type=ed.type;
+  const cats=db.categories.filter(c=>c.type===type);
+  const brl=c=>'R$ '+((c||0)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const catOpts=cid=>cats.map(c=>`<option value="${c.id}" ${c.id===cid?'selected':''}>${esc(c.name)}</option>`).join('');
+  openSheet(`<div class="sh-head"><button id="shCancel">Voltar</button><h2>Dividir</h2><button id="shSave">Salvar</button></div>
+    <div class="body">
+      <p style="color:var(--muted);font-size:13px;margin:0 0 6px">${esc(ed.note||'Lançamento')} · total ${brl(total)}</p>
+      <div id="splitRemain" style="font-size:13px;font-weight:600;margin:0 0 14px"></div>
+      <div id="splitRows"></div>
+      <button class="btn ghost" id="spAddBtn" style="width:100%">Adicionar parte</button>
+    </div>`);
+  const rows=sheetContent.querySelector('#splitRows'), remain=sheetContent.querySelector('#splitRemain');
+  function sumCents(){ let s=0; rows.querySelectorAll('.spAmt').forEach(i=>{ s+=parseInt((i.value||'').replace(/\D/g,'')||'0',10); }); return s; }
+  function paint(){ const r=total-sumCents(); remain.textContent=r===0?'Tudo distribuído ✓':(r>0?('Falta '+brl(r)):('Passou '+brl(-r))); remain.style.color=r===0?'var(--pos)':(r>0?'var(--muted)':'var(--neg)'); }
+  function addRow(cid,label){
+    const el=document.createElement('div'); el.className='split-row';
+    el.style.cssText='border:1px solid var(--border);border-radius:var(--r-ui);padding:10px;margin-bottom:10px';
+    el.innerHTML=`<div class="amount-in" style="margin:0 0 8px"><span class="cur">R$</span><input class="spAmt" placeholder="0,00" inputmode="numeric"></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="spCat" style="flex:1;min-width:0">${catOpts(cid)}</select>
+        <input class="spNote" placeholder="etiqueta" maxlength="40" value="${esc(label||'')}" style="flex:1;min-width:0">
+        <button class="spDel" style="color:var(--muted);background:none;border:0;font-size:18px;padding:0 4px">✕</button>
+      </div>`;
+    rows.appendChild(el);
+    bindMoney(el.querySelector('.spAmt'),0);
+    el.querySelector('.spAmt').addEventListener('input',paint);
+    el.querySelector('.spDel').addEventListener('click',()=>{ if(rows.querySelectorAll('.split-row').length>1){ el.remove(); paint(); } });
+  }
+  addRow(ed.categoryId, ed.note||''); addRow(cats[0]&&cats[0].id, ''); paint();
+  sheetContent.querySelector('#spAddBtn').addEventListener('click',()=>addRow(cats[0]&&cats[0].id,''));
+  sheetContent.querySelector('#shCancel').addEventListener('click',()=>txSheet(ed));
+  sheetContent.querySelector('#shSave').addEventListener('click',()=>{
+    const parts=[]; rows.querySelectorAll('.split-row').forEach(el=>{ const c=parseInt((el.querySelector('.spAmt').value||'').replace(/\D/g,'')||'0',10); if(c>0) parts.push({amount:c,categoryId:el.querySelector('.spCat').value,note:el.querySelector('.spNote').value.trim()}); });
+    if(parts.length<2){ alert('Informe pelo menos 2 partes com valor.'); return; }
+    const soma=parts.reduce((s,p)=>s+p.amount,0), diff=total-soma;
+    if(diff!==0){ alert('As partes somam '+brl(soma)+', mas o total é '+brl(total)+'. '+(diff>0?('Faltam '+brl(diff)):('Sobraram '+brl(-diff)))+'.'); return; }
+    db.transactions=db.transactions.filter(t=>t.id!==ed.id);
+    parts.forEach((p,i)=>{ const t={id:uid(),type,amount:p.amount,categoryId:p.categoryId,date:ed.date,note:p.note||ed.note||'',_o:Date.now()+i,_m:Date.now()}; if(ed.tags) t.tags=ed.tags.slice(); db.transactions.push(t); if(type==='expense'&&t.note) sherlockLearn(t.note,p.categoryId); });
+    save(); closeSheet(); const [Y,M]=ed.date.split('-').map(Number); curY=Y; curM=M-1; renderAll();
+    if(typeof pushSync==='function') pushSync();
+    toast('Dividido em '+parts.length+' partes.');
   });
 }
 
