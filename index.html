@@ -801,6 +801,10 @@ function renderAjustes(){
       <button class="item" id="catBtn"><div class="t">Gerenciar categorias<small>${db.categories.length} categorias</small></div><span class="chev">›</span></button>
       <button class="item" id="learnBtn"><div class="t">Categorias aprendidas<small>${nLearned? nLearned+' regra'+(nLearned===1?'':'s')+' de estabelecimento → categoria. Toque para ver ou esquecer.' : 'Quando você corrige a categoria de um lançamento, eu memorizo o estabelecimento e acerto sozinho depois.'}</small></div><span class="chev">›</span></button>
     </div>
+    <div class="sec-title">Manutenção</div>
+    <div class="list">
+      <button class="item" id="cleanGhostBtn"><div class="t">Limpar entradas fantasmas do cartão<small>Remove receitas falsas do Pix no Crédito ("Valor adicionado na conta..."), que na verdade são transferência interna do cartão.</small></div><span class="chev">›</span></button>
+    </div>
     <div class="sec-title">Alertas de meta</div>
     <div class="list">
       <button class="item" id="notifBtn"><div class="t">Avisar em 50%, 75% e 100%<small>${notifTxt}</small></div><span class="chev">›</span></button>
@@ -2416,6 +2420,20 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#closeDayBtn')){ const cur=closingDay(); const v=prompt('Dia de fechamento da fatura (1 a 28). Digite 0 para voltar ao mês do calendário.', String(cur)); if(v===null) return; const n=parseInt(v,10); if(isNaN(n)||n<0||n>28){ toast('Digite um número de 0 a 28.'); return; } db.settings=db.settings||{}; db.settings.closingDay=n; save(); const ck=cycleKey(localDate(now)).split('-'); curY=+ck[0]; curM=+ck[1]-1; homeFilter=null; toast(n?('Agora por fechamento, dia '+n+'.'):'Agora por mês do calendário.'); renderAll(); return; }
   if(e.target.closest('#catBtn')){ catSheet(); return; }
   if(e.target.closest('#learnBtn')){ learnSheet(); return; }
+  if(e.target.closest('#cleanGhostBtn')){
+    // "Valor adicionado na conta por cartão de crédito" = perna interna do Pix no Crédito.
+    // Entrou como receita em syncs antigos; hoje o normalizador derruba. Remove os que sobraram.
+    const alvo=db.transactions.filter(t=>t.type==='income' && /^valor adicionad/i.test((t.note||'').trim()));
+    if(!alvo.length){ toast('Nenhuma entrada fantasma encontrada.'); return; }
+    const soma=alvo.reduce((s,t)=>s+t.amount,0);
+    if(confirm(`Encontrei ${alvo.length} entrada(s) fantasma somando ${fmt(soma)} (Pix no Crédito lançado como receita). Remover? Não afeta os gastos reais do cartão.`)){
+      const ids=new Set(alvo.map(t=>t.id));
+      db.transactions=db.transactions.filter(t=>!ids.has(t.id));
+      save(); renderAll(); if(typeof pushSync==='function') pushSync();
+      toast(`Removi ${alvo.length} entrada(s) fantasma (${fmt(soma)}).`);
+    }
+    return;
+  }
   if(e.target.closest('#lockBtn')){ lockSheet(); return; }
   if(e.target.closest('#notifBtn')){ if('Notification' in window){ Notification.requestPermission().then(p=>{ if(p==='granted') toast('Alertas ativados no celular.'); renderAll(); }); } else { toast('Este navegador não suporta notificações.'); } return; }
   if(e.target.closest('#pushBtn')){ enablePush(); return; }
