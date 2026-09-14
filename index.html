@@ -1509,8 +1509,11 @@ function cloudReplace(doc){ // servidor autoritativo (pull mais novo)
   CLOUD_KEYS.forEach(k=>{ if(doc[k]!==undefined) db[k]=doc[k]; });
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=doc.sherlock; }
   mergeOfDeleted(doc);
+  dropOfDeleted();
   ensureCats();
 }
+// Remove das transações locais tudo que está na lista de removidos de propósito.
+function dropOfDeleted(){ if(!Array.isArray(db.ofDeleted)||!db.ofDeleted.length) return; const rm=new Set(db.ofDeleted); db.transactions=(db.transactions||[]).filter(t=>!rm.has(t.id)); }
 function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adicionado offline
   if(!doc||typeof doc!=='object') return;
   ['transactions','bills','patrimonio'].forEach(k=>{ if(!Array.isArray(doc[k])) return;
@@ -1527,6 +1530,7 @@ function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adi
   if(doc.patrHist) db.patrHist=Object.assign({}, doc.patrHist, db.patrHist||{}); // histórico por ciclo: local vence no conflito
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=Object.assign({}, doc.sherlock, db.settings.catMemory||{}); }
   mergeOfDeleted(doc);
+  dropOfDeleted();
   ensureCats();
 }
 function cloudStatus(state,msg){ cloudLast = state==='ok'?'Sincronizado agora.' : state==='sync'?'Sincronizando...' : ('Erro: '+(msg||'')); const el=document.getElementById('cloudStatusLine'); if(el) el.textContent=cloudLast; if(state==='err') console.warn('[nuvem]',msg); }
@@ -1588,6 +1592,24 @@ async function cloudSyncNow(){
     else{ toast('Sincronizado — nada novo do banco.'); }
   }catch(e){ toast('Falha ao sincronizar: '+(e.message||e)); }
 }
+// Recupera dados presos na nuvem: baixa o estado autoritativo e MESCLA (união por id),
+// ignorando o guard de versão do cloudPull. Não perde edição local (sobe antes; união não apaga).
+async function cloudPullForce(){
+  if(!cloudOn()){ toast('Ligue a nuvem primeiro.'); return; }
+  const s=cloudCfg();
+  try{
+    if(cloudDirty){ await cloudPush(); }
+    const res=await cloudReq('GET','/api/state?clientId='+encodeURIComponent(s.cloudAcct));
+    if(!res || !res.doc || (res.rev||0)===0){ toast('A nuvem está vazia.'); return; }
+    const antes=(db.transactions||[]).length;
+    cloudUnion(res.doc);
+    s.cloudRev=Math.max(s.cloudRev||0, res.rev||0);
+    cloudDirty=true; cloudSaveLocal(); renderAll();
+    await cloudPush();
+    const dif=(db.transactions||[]).length-antes;
+    toast(dif>0 ? ('Recuperado da nuvem: +'+dif+' lançamento(s).') : 'Nuvem baixada — nada faltando localmente.');
+  }catch(e){ toast('Falha ao baixar: '+(e.message||e)); }
+}
 function cloudSheet(){
   const s=cloudCfg();
   openSheet(`<div class="sh-head"><button id="shCancel">Fechar</button><h2>Nuvem</h2><button id="shSave">${s.cloudOn?'Sincronizar':'Ligar'}</button></div><div class="body">
@@ -1596,6 +1618,7 @@ function cloudSheet(){
     <div class="field"><label>Segredo (APP_SECRET)</label><input type="text" id="cloudSecIn" placeholder="cole o segredo" autocomplete="off" value="${esc(s.cloudSecret||'')}"></div>
     <div id="cloudStatusLine" style="font-size:12px;color:var(--muted);margin:4px 0 0;">${s.cloudOn?(cloudLast||'Sincronização ligada.'):'Desligada.'}</div>
     ${s.cloudOn?'<button class="btn ghost" id="cloudSyncBtn" style="margin-top:16px;width:100%">Sincronizar agora (Open Finance)</button>':''}
+    ${s.cloudOn?'<button class="btn ghost" id="cloudPullBtn" style="margin-top:10px;width:100%">Baixar da nuvem (recuperar dados)</button>':''}
     ${s.cloudOn?'<button id="cloudOffBtn" style="margin-top:14px;color:var(--muted);font-size:13px;">Desligar sincronização neste aparelho</button>':''}
   </div>`);
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
@@ -1614,6 +1637,8 @@ function cloudSheet(){
   });
   const sb=sheetContent.querySelector('#cloudSyncBtn');
   if(sb) sb.addEventListener('click',()=>{ sb.disabled=true; sb.textContent='Sincronizando...'; cloudSyncNow().finally(()=>{ sb.disabled=false; sb.textContent='Sincronizar agora (Open Finance)'; }); });
+  const pb=sheetContent.querySelector('#cloudPullBtn');
+  if(pb) pb.addEventListener('click',()=>{ pb.disabled=true; const o=pb.textContent; pb.textContent='Baixando...'; cloudPullForce().finally(()=>{ pb.disabled=false; pb.textContent=o; }); });
   const off=sheetContent.querySelector('#cloudOffBtn');
   if(off) off.addEventListener('click',()=>{ s.cloudOn=false; cloudSaveLocal(); toast('Sincronização desligada neste aparelho.'); closeSheet(); renderAll(); });
 }
