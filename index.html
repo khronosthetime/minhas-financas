@@ -646,7 +646,7 @@ function renderInicio(){
       const sign=x.type==='income'?'+':'−';
       html+=`<button class="tx" data-tx="${x.id}">
         <span class="ic" style="background:${c.color}">${initials(c.name)}</span>
-        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(x.fonte):''}${x._sched?' · <span class="sched">agendada</span>':''}</div>${x.tags&&x.tags.length?`<div class="tx-tags">${x.tags.map(tg=>`<span class="ttag">${esc(tg)}</span>`).join('')}</div>`:''}</span>
+        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(x.fonte):''}${x._sched?' · <span class="sched">agendada</span>':''}</div>${x.desc?`<div class="tx-desc" style="font-size:11px;color:var(--muted);opacity:.85;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46ch">${esc(x.desc)}</div>`:''}${x.tags&&x.tags.length?`<div class="tx-tags">${x.tags.map(tg=>`<span class="ttag">${esc(tg)}</span>`).join('')}</div>`:''}</span>
         <span class="amt ${x.type==='income'?'pos':'neg'} tnum">${sign} ${fmt(x.amount)}</span>
       </button>`;
     });
@@ -1666,7 +1666,19 @@ function txSheet(existing){
       <div class="amount-in"><span class="cur">R$</span><input id="amtIn" placeholder="0,00" inputmode="numeric"></div>
       <div class="field"><label>Categoria</label><div class="chips" id="catChips"></div></div>
       <div class="field"><label>Data</label><input type="date" id="dateIn" value="${ed?ed.date:localDate(now)}"></div>
-      <div class="field"><label>Observação</label><input type="text" id="noteIn" placeholder="Opcional" value="${ed?esc(ed.note||''):''}" maxlength="60"></div>
+      ${ed?'':`<div class="field" id="parcField">
+        <label>Parcelas</label>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input type="number" id="parcN" min="1" max="48" value="1" style="width:70px">
+          <div class="seg" id="parcModeSeg" hidden style="flex:1;min-width:200px">
+            <button type="button" data-v="total" class="on">Valor total</button>
+            <button type="button" data-v="per">Por parcela</button>
+          </div>
+        </div>
+        <div id="parcHint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      </div>`}
+      <div class="field"><label>Nome</label><input type="text" id="noteIn" placeholder="Ex: Mercado, Uber, Aluguel" value="${ed?esc(ed.note||''):''}" maxlength="60"></div>
+      <div class="field"><label>Descritivo</label><textarea id="descIn" placeholder="Opcional. Ex: Apple Watch 207,07 + AirPods 198,94 + Marmita 739,00 + juros 130,34" maxlength="200" rows="2" style="width:100%;resize:vertical;font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-ui);padding:10px">${ed?esc(ed.desc||''):''}</textarea></div>
       <div class="field"><label>Etiquetas (separadas por vírgula)</label><input type="text" id="tagsIn" placeholder="ex: viagem, reembolsável" value="${ed&&ed.tags?esc(ed.tags.join(', ')):''}" maxlength="80"></div>
       ${ed?'<button class="btn ghost" id="splitBtn" style="margin-top:10px">Dividir em partes</button>':''}
       ${ed?'<button class="btn ghost" id="delBtn">Excluir lançamento</button>':''}
@@ -1685,11 +1697,34 @@ function txSheet(existing){
   }
   paintChips();
 
+  // Parcelas (só em lançamento novo e despesa)
+  let parcMode='total';
+  const parcField=sheetContent.querySelector('#parcField');
+  function parcN(){ const n=parseInt((sheetContent.querySelector('#parcN')||{}).value,10)||1; return Math.max(1,Math.min(48,n)); }
+  function updateParc(){
+    if(!parcField) return;
+    const income=type==='income';
+    parcField.hidden=income;
+    const N=parcN(), seg=sheetContent.querySelector('#parcModeSeg'), hint=sheetContent.querySelector('#parcHint');
+    if(income||N<2){ if(seg) seg.hidden=true; if(hint) hint.textContent=''; return; }
+    if(seg) seg.hidden=false;
+    const amt=getAmt(); if(!amt||!hint){ if(hint) hint.textContent=''; return; }
+    const per = parcMode==='per'? amt : Math.floor(amt/N);
+    const total = parcMode==='per'? amt*N : amt;
+    hint.textContent = `${N}x de ${fmt(per)}${parcMode==='per'?'':(amt%N?' (1ª ajustada)':'')} · total ${fmt(total)}`;
+  }
+  if(parcField){
+    sheetContent.querySelector('#parcN').addEventListener('input',updateParc);
+    sheetContent.querySelector('#amtIn').addEventListener('input',updateParc);
+    sheetContent.querySelector('#parcModeSeg').addEventListener('click',e=>{ const b=e.target.closest('[data-v]'); if(!b) return; parcMode=b.dataset.v; sheetContent.querySelectorAll('#parcModeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.v===parcMode)); updateParc(); });
+    updateParc();
+  }
+
   sheetContent.querySelector('#typeSeg').addEventListener('click',e=>{
     const b=e.target.closest('[data-v]'); if(!b)return;
     type=b.dataset.v;
     sheetContent.querySelectorAll('#typeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.v===type));
-    catId=null; paintChips();
+    catId=null; paintChips(); updateParc();
   });
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
   if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{
@@ -1701,9 +1736,22 @@ function txSheet(existing){
     if(!amount){ alert('Informe um valor.'); return; }
     const date=sheetContent.querySelector('#dateIn').value||localDate(now);
     const note=sheetContent.querySelector('#noteIn').value.trim();
+    const desc=(sheetContent.querySelector('#descIn').value||'').trim();
     const tags=sheetContent.querySelector('#tagsIn').value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,6);
-    if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note,_m:Date.now()}); if(tags.length) ed.tags=tags; else delete ed.tags; }
-    else{ const t={id:uid(),type,amount,categoryId:catId,date,note,_o:Date.now(),_m:Date.now()}; if(tags.length) t.tags=tags; db.transactions.push(t); }
+    const N=parcN();
+    // Parcela: só em lançamento NOVO e despesa. Gera grupo _pg com as N parcelas.
+    if(!ed && type==='expense' && N>1){
+      const base=note||((catById(catId)||{}).name||'Compra');
+      const per=[]; if(parcMode==='per'){ for(let i=0;i<N;i++) per.push(amount); } else { const b=Math.floor(amount/N), rem=amount-b*N; for(let i=0;i<N;i++) per.push(b+(i<rem?1:0)); }
+      const pg=uid();
+      for(let k=0;k<N;k++){ const t={id:uid(),type:'expense',amount:per[k],categoryId:catId,date:k===0?date:addMonthsStr(date,k),note:`${base} (${k+1}/${N})`,_o:Date.now()+k,_m:Date.now(),_pg:pg}; if(k>0) t._sched=1; if(tags.length) t.tags=tags.slice(); if(desc) t.desc=desc; db.transactions.push(t); }
+      if(note) sherlockLearn(note, catId);
+      save(); closeSheet(); const [Y0,M0]=date.split('-').map(Number); curY=Y0; curM=M0-1; renderAll(); checkGoals(catId); pushSync();
+      toast(`Parcelado: ${N}x de ${fmt(per[0])}.`);
+      return;
+    }
+    if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note,_m:Date.now()}); if(tags.length) ed.tags=tags; else delete ed.tags; if(desc) ed.desc=desc; else delete ed.desc; }
+    else{ const t={id:uid(),type,amount,categoryId:catId,date,note,_o:Date.now(),_m:Date.now()}; if(tags.length) t.tags=tags; if(desc) t.desc=desc; db.transactions.push(t); }
     if(type==='expense' && note && (!ed || catId!==prevCat)) sherlockLearn(note, catId);
     save(); closeSheet();
     // jump to month of the tx
