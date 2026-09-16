@@ -600,6 +600,16 @@ function renderInicio(){
   // filtro só vale se a categoria existe nos gastos do mês
   if(homeFilter && !byCat[homeFilter]) homeFilter=null;
 
+  // Parcelas: quanto do mês é parcela e quanto isso pesa na renda.
+  const _today=localDate(now);
+  const _pkey=x=>x._pg||('n:'+(x.note||'').replace(/\s*\(\d+\/\d+\)\s*$/,'').trim().toUpperCase());
+  const _futExp=db.transactions.filter(x=>x.type==='expense'&&x.date>_today&&x.categoryId!=='c_aporte');
+  const _pk=new Set(); _futExp.forEach(x=>_pk.add(_pkey(x)));
+  const parcMes=txInMonth().filter(x=>x.type==='expense'&&_pk.has(_pkey(x))).reduce((s,x)=>s+x.amount,0);
+  const parcAberto=_futExp.reduce((s,x)=>s+x.amount,0);
+  const parcPct=t.inc?Math.round(parcMes/t.inc*100):0;
+  const parcColor=parcPct<15?'var(--pos)':parcPct<=30?'var(--warn)':'var(--neg)';
+
   let html=`<div class="board">`;
 
   // KPIs
@@ -613,6 +623,14 @@ function renderInicio(){
       <div class="tile pos"><div class="lbl">Entrou</div><div class="v tnum">${fmt(t.inc)}</div></div>
       <div class="tile neg"><div class="lbl">Saiu</div><div class="v tnum">${fmt(t.exp)}</div></div>
     </div>
+  </div>`;
+
+  if(parcMes>0) html+=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:13px 16px;margin:0 0 4px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">
+      <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Parcelas do mês</span>
+      <span class="tnum" style="color:${parcColor};font-weight:700;font-size:18px">${fmt(parcMes)} · ${parcPct}%</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:3px">${parcPct}% da renda do mês · ${fmt(parcAberto)} em aberto no total</div>
   </div>`;
 
   const cards=cardsInCycle();
