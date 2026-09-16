@@ -470,6 +470,9 @@ function defaults(){
       {id:'c_juros',name:'Juros',color:'#A6603C',type:'expense'},
       {id:'c_seg',name:'Seguro',color:'#5C6BC0',type:'expense'},
       {id:'c_vest',name:'Vestuário',color:'#4DB6AC',type:'expense'},
+      {id:'c_viagem',name:'Viagem',color:'#29A3C4',type:'expense'},
+      {id:'c_elet',name:'Eletrônicos',color:'#546E7A',type:'expense'},
+      {id:'c_casa',name:'Casa',color:'#B08968',type:'expense'},
       {id:'c_aporte',name:'Investimento',color:'#28CC95',type:'expense'},
       {id:'c_salary',name:'Salário',color:'#1E8E5A',type:'income'},
       {id:'c_invest',name:'Investimentos',color:'#3B7BB0',type:'income'},
@@ -499,6 +502,8 @@ function ensureCats(){
   if(!db.categories.some(c=>c.id==='c_juros')) db.categories.splice(db.categories.findIndex(c=>c.id==='c_aporte')>=0?db.categories.findIndex(c=>c.id==='c_aporte'):db.categories.length,0,{id:'c_juros',name:'Juros',color:'#A6603C',type:'expense'});
   if(!db.categories.some(c=>c.id==='c_seg')) db.categories.splice(db.categories.findIndex(c=>c.id==='c_aporte')>=0?db.categories.findIndex(c=>c.id==='c_aporte'):db.categories.length,0,{id:'c_seg',name:'Seguro',color:'#5C6BC0',type:'expense'});
   if(!db.categories.some(c=>c.id==='c_vest')) db.categories.splice(db.categories.findIndex(c=>c.id==='c_aporte')>=0?db.categories.findIndex(c=>c.id==='c_aporte'):db.categories.length,0,{id:'c_vest',name:'Vestuário',color:'#4DB6AC',type:'expense'});
+  const cAdd=[['c_viagem','Viagem','#29A3C4'],['c_elet','Eletrônicos','#546E7A'],['c_casa','Casa','#B08968']];
+  cAdd.forEach(([id,name,color])=>{ if(!db.categories.some(c=>c.id===id)){ const i=db.categories.findIndex(c=>c.id==='c_aporte'); db.categories.splice(i>=0?i:db.categories.length,0,{id,name,color,type:'expense'}); } });
 }
 ensureCats();
 function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ alert('Não foi possível salvar. O armazenamento do navegador pode estar cheio ou bloqueado.'); } cloudSchedulePush(); }
