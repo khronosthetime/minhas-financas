@@ -528,8 +528,11 @@ function closingDay(){ const s=db.settings||{}; if(s.closingDay===0) return 0; c
 function cycleKey(dateStr){ const cd=closingDay(); if(!cd) return dateStr.slice(0,7); let [Y,M,D]=dateStr.split('-').map(Number); if(D<cd){ M--; if(M<1){M=12;Y--;} } return Y+'-'+String(M).padStart(2,'0'); }
 function curCycle(){ return cycleKey(localDate(now)); }
 function cycleRange(){ const cd=closingDay(); if(!cd) return ''; const s=new Date(curY,curM,cd), e=new Date(curY,curM+1,cd-1); const f=d=>String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); return f(s)+'–'+f(e); }
-function txInMonth(){const ym=ymOf(); return db.transactions.filter(t=>cycleKey(t.date)===ym && (!cardFilter || t.fonte===cardFilter));}
-function cardsInCycle(){const ym=ymOf(); return [...new Set(db.transactions.filter(t=>cycleKey(t.date)===ym && t.fonte).map(t=>t.fonte))].sort();}
+// O cartão XP vem rotulado com o nome da conexão "XP Investimentos" (que é a corretora).
+// No app isso é só "XP" — "XP Investimentos" de verdade = aplicações, que nem entram no feed.
+function normFonte(f){ return f==='XP Investimentos' ? 'XP' : f; }
+function txInMonth(){const ym=ymOf(); return db.transactions.filter(t=>cycleKey(t.date)===ym && (!cardFilter || normFonte(t.fonte)===cardFilter));}
+function cardsInCycle(){const ym=ymOf(); return [...new Set(db.transactions.filter(t=>cycleKey(t.date)===ym && t.fonte).map(t=>normFonte(t.fonte)))].sort();}
 
 function monthTotals(){
   let inc=0,exp=0;
@@ -662,7 +665,7 @@ function renderInicio(){
       const sign=x.type==='income'?'+':'−';
       html+=`<button class="tx" data-tx="${x.id}">
         <span class="ic" style="background:${c.color}">${initials(c.name)}</span>
-        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(x.fonte):''}${x._sched?' · <span class="sched">agendada</span>':''}</div>${x.desc?`<div class="tx-desc" style="font-size:11px;color:var(--muted);opacity:.85;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46ch">${esc(x.desc)}</div>`:''}${x.tags&&x.tags.length?`<div class="tx-tags">${x.tags.map(tg=>`<span class="ttag">${esc(tg)}</span>`).join('')}</div>`:''}</span>
+        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(normFonte(x.fonte)):''}${x._sched?' · <span class="sched">agendada</span>':''}</div>${x.desc?`<div class="tx-desc" style="font-size:11px;color:var(--muted);opacity:.85;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46ch">${esc(x.desc)}</div>`:''}${x.tags&&x.tags.length?`<div class="tx-tags">${x.tags.map(tg=>`<span class="ttag">${esc(tg)}</span>`).join('')}</div>`:''}</span>
         <span class="amt ${x.type==='income'?'pos':'neg'} tnum">${sign} ${fmt(x.amount)}</span>
       </button>`;
     });
@@ -919,7 +922,7 @@ function renderRelatorios(){
 
   html+=`<div class="board-col board-side">`;
   const ym=ymOf(), byCard={};
-  db.transactions.forEach(t=>{ if(cycleKey(t.date)===ym && t.type==='expense' && t.fonte){ byCard[t.fonte]=(byCard[t.fonte]||0)+t.amount; } });
+  db.transactions.forEach(t=>{ if(cycleKey(t.date)===ym && t.type==='expense' && t.fonte){ const f=normFonte(t.fonte); byCard[f]=(byCard[f]||0)+t.amount; } });
   const cards=Object.entries(byCard).sort((a,b)=>b[1]-a[1]);
   html+=`<div class="panel"><div class="sec-title">Gastos por cartão · ${closingDay()?cycleRange():MONTHS[curM].toLowerCase()}</div>`;
   if(cards.length){ const maxc=cards[0][1];
