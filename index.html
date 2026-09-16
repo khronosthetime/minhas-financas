@@ -468,6 +468,8 @@ function defaults(){
       {id:'c_other',name:'Outros',color:'#6A7686',type:'expense'},
       {id:'c_mae',name:'Mãe',color:'#C77DB0',type:'expense'},
       {id:'c_juros',name:'Juros',color:'#A6603C',type:'expense'},
+      {id:'c_seg',name:'Seguro',color:'#5C6BC0',type:'expense'},
+      {id:'c_vest',name:'Vestuário',color:'#4DB6AC',type:'expense'},
       {id:'c_aporte',name:'Investimento',color:'#28CC95',type:'expense'},
       {id:'c_salary',name:'Salário',color:'#1E8E5A',type:'income'},
       {id:'c_invest',name:'Investimentos',color:'#3B7BB0',type:'income'},
@@ -495,6 +497,8 @@ function ensureCats(){
   const i2=db.categories.findIndex(c=>c.id==='c_aporte');
   if(!db.categories.some(c=>c.id==='c_mae')) db.categories.splice(i2>=0?i2:db.categories.length,0,{id:'c_mae',name:'Mãe',color:'#C77DB0',type:'expense'});
   if(!db.categories.some(c=>c.id==='c_juros')) db.categories.splice(db.categories.findIndex(c=>c.id==='c_aporte')>=0?db.categories.findIndex(c=>c.id==='c_aporte'):db.categories.length,0,{id:'c_juros',name:'Juros',color:'#A6603C',type:'expense'});
+  if(!db.categories.some(c=>c.id==='c_seg')) db.categories.splice(db.categories.findIndex(c=>c.id==='c_aporte')>=0?db.categories.findIndex(c=>c.id==='c_aporte'):db.categories.length,0,{id:'c_seg',name:'Seguro',color:'#5C6BC0',type:'expense'});
+  if(!db.categories.some(c=>c.id==='c_vest')) db.categories.splice(db.categories.findIndex(c=>c.id==='c_aporte')>=0?db.categories.findIndex(c=>c.id==='c_aporte'):db.categories.length,0,{id:'c_vest',name:'Vestuário',color:'#4DB6AC',type:'expense'});
 }
 ensureCats();
 function save(){ try{ localStorage.setItem(KEY,JSON.stringify(db)); }catch(e){ alert('Não foi possível salvar. O armazenamento do navegador pode estar cheio ou bloqueado.'); } cloudSchedulePush(); }
@@ -1719,6 +1723,16 @@ function txSheet(existing){
         </div>
         <div id="parcHint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
       </div>`}
+      ${ed && !ed._pg ? `<div class="field" id="parcEditField"${ed.type==='income'?' hidden':''}>
+        <label>Parcela</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="color:var(--muted);font-size:13px">Esta é a parcela</span>
+          <input type="number" id="parcEN" min="1" max="48" value="1" style="width:56px">
+          <span style="color:var(--muted);font-size:13px">de</span>
+          <input type="number" id="parcEM" min="1" max="48" value="1" style="width:56px">
+        </div>
+        <div id="parcEHint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      </div>` : ''}
       <div class="field"><label>Nome</label><input type="text" id="noteIn" placeholder="Ex: Mercado, Uber, Aluguel" value="${ed?esc(ed.note||''):''}" maxlength="60"></div>
       <div class="field"><label>Descritivo</label><textarea id="descIn" placeholder="Opcional. Ex: Apple Watch 207,07 + AirPods 198,94 + Marmita 739,00 + juros 130,34" maxlength="200" rows="2" style="width:100%;resize:vertical;font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-ui);padding:10px">${ed?esc(ed.desc||''):''}</textarea></div>
       <div class="field"><label>Etiquetas (separadas por vírgula)</label><input type="text" id="tagsIn" placeholder="ex: viagem, reembolsável" value="${ed&&ed.tags?esc(ed.tags.join(', ')):''}" maxlength="80"></div>
@@ -1762,11 +1776,29 @@ function txSheet(existing){
     updateParc();
   }
 
+  // Marcar um lançamento EXISTENTE como parcela N de M (gera as futuras pra frente).
+  const parcEditField=sheetContent.querySelector('#parcEditField');
+  function parcEN(){ return Math.max(1,Math.min(48,parseInt((sheetContent.querySelector('#parcEN')||{}).value,10)||1)); }
+  function parcEM(){ return Math.max(1,Math.min(48,parseInt((sheetContent.querySelector('#parcEM')||{}).value,10)||1)); }
+  function updateParcEdit(){
+    if(!parcEditField) return;
+    parcEditField.hidden = type==='income';
+    const h=sheetContent.querySelector('#parcEHint'); if(!h) return;
+    const m=parcEM(), n=Math.min(parcEN(),m);
+    if(m<2){ h.textContent=''; return; }
+    h.textContent = (m>n)? `Cria as parcelas ${n+1} a ${m} nos próximos meses (agendadas).` : 'Marca como última parcela, sem gerar futuras.';
+  }
+  if(parcEditField){
+    sheetContent.querySelector('#parcEN').addEventListener('input',updateParcEdit);
+    sheetContent.querySelector('#parcEM').addEventListener('input',updateParcEdit);
+    updateParcEdit();
+  }
+
   sheetContent.querySelector('#typeSeg').addEventListener('click',e=>{
     const b=e.target.closest('[data-v]'); if(!b)return;
     type=b.dataset.v;
     sheetContent.querySelectorAll('#typeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.v===type));
-    catId=null; paintChips(); updateParc();
+    catId=null; paintChips(); updateParc(); updateParcEdit();
   });
   sheetContent.querySelector('#shCancel').addEventListener('click',closeSheet);
   if(ed) sheetContent.querySelector('#delBtn').addEventListener('click',()=>{
@@ -1790,6 +1822,19 @@ function txSheet(existing){
       if(note) sherlockLearn(note, catId);
       save(); closeSheet(); const [Y0,M0]=date.split('-').map(Number); curY=Y0; curM=M0-1; renderAll(); checkGoals(catId); pushSync();
       toast(`Parcelado: ${N}x de ${fmt(per[0])}.`);
+      return;
+    }
+    // Marcar lançamento EXISTENTE como parcela N de M: gera N+1..M pra frente (agendadas).
+    if(ed && !ed._pg && type==='expense' && parcEM()>1){
+      const em=parcEM(), en=Math.min(parcEN(),em);
+      const base=(note||((catById(catId)||{}).name||'Compra')).replace(/\s*\(\d+\/\d+\)\s*$/,'');
+      const pg=uid();
+      Object.assign(ed,{type,amount,categoryId:catId,date,note:`${base} (${en}/${em})`,_m:Date.now(),_pg:pg});
+      if(tags.length) ed.tags=tags; else delete ed.tags; if(desc) ed.desc=desc; else delete ed.desc;
+      for(let k=en+1;k<=em;k++){ const t={id:uid(),type:'expense',amount,categoryId:catId,date:addMonthsStr(date,k-en),note:`${base} (${k}/${em})`,_o:Date.now()+k,_m:Date.now(),_pg:pg,_sched:1}; if(tags.length) t.tags=tags.slice(); if(desc) t.desc=desc; db.transactions.push(t); }
+      if(note) sherlockLearn(base, catId);
+      save(); closeSheet(); const [Ye,Me]=date.split('-').map(Number); curY=Ye; curM=Me-1; renderAll(); checkGoals(catId); pushSync();
+      toast(`Marcado como ${en}/${em}`+(em>en?` · +${em-en} futura(s)`:'')+'.');
       return;
     }
     if(ed){ Object.assign(ed,{type,amount,categoryId:catId,date,note,_m:Date.now()}); if(tags.length) ed.tags=tags; else delete ed.tags; if(desc) ed.desc=desc; else delete ed.desc; }
