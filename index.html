@@ -581,7 +581,7 @@ function renderInicio(){
   const byCat={};
   txInMonth().forEach(x=>{ if(x.type==='expense' && x.categoryId!=='c_aporte'){ byCat[x.categoryId]=(byCat[x.categoryId]||0)+x.amount; }});
   const catsAll=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
-  const cats=catsAll.slice(0,5);
+  const cats=catsAll; // mostra TODAS as categorias no "Para onde foi"
   const maxCat=cats.length?cats[0][1]:1;
   const totalGastos=catsAll.reduce((s,e)=>s+e[1],0);
   // donut (desktop): top 6 + "Outros"
