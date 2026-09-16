@@ -823,6 +823,7 @@ function renderAjustes(){
     <div class="sec-title">Manutenção</div>
     <div class="list">
       <button class="item" id="cleanGhostBtn"><div class="t">Limpar entradas fantasmas do cartão<small>Remove receitas falsas do Pix no Crédito ("Valor adicionado na conta..."), que na verdade são transferência interna do cartão.</small></div><span class="chev">›</span></button>
+      <button class="item" id="dedupBtn"><div class="t">Remover lançamentos duplicados<small>Remove cobranças importadas em dobro (mesma data, valor e nome por duas conexões, ex: XP e XP Investimentos). Mantém uma de cada.</small></div><span class="chev">›</span></button>
     </div>
     <div class="sec-title">Alertas de meta</div>
     <div class="list">
@@ -2525,6 +2526,26 @@ $('#app').addEventListener('click',e=>{
       db.transactions=db.transactions.filter(t=>!ids.has(t.id));
       save(); renderAll(); if(typeof pushSync==='function') pushSync();
       toast(`Removi ${alvo.length} entrada(s) fantasma (${fmt(soma)}).`);
+    }
+    return;
+  }
+  if(e.target.closest('#dedupBtn')){
+    // Cartao importado por 2 conexoes (XP + XP Investimentos): mesma compra em dobro.
+    // Agrupa por data|valor|nome; se ha 2+ FONTES diferentes, mantem 1 (a categorizada) e remove o resto.
+    const ofs=db.transactions.filter(t=>/^of_/.test(t.id));
+    const groups={};
+    ofs.forEach(t=>{ const k=t.date+'|'+t.amount+'|'+(t.note||'').trim().toUpperCase(); (groups[k]=groups[k]||[]).push(t); });
+    const remove=[];
+    Object.values(groups).forEach(g=>{ if(g.length<2) return; if(new Set(g.map(t=>t.fonte||'')).size<2) return;
+      g.sort((a,b)=>(a.categoryId==='c_other'?1:0)-(b.categoryId==='c_other'?1:0)); for(let i=1;i<g.length;i++) remove.push(g[i]); });
+    if(!remove.length){ toast('Nenhum duplicado encontrado.'); return; }
+    const soma=remove.reduce((s,t)=>s+t.amount,0);
+    if(confirm(`Encontrei ${remove.length} lançamento(s) duplicado(s) somando ${fmt(soma)} (mesma compra importada por duas conexões). Remover as cópias extras? Mantém uma de cada.`)){
+      const ids=new Set(remove.map(t=>t.id));
+      remove.forEach(t=>markOfDeleted(t.id));
+      db.transactions=db.transactions.filter(t=>!ids.has(t.id));
+      save(); renderAll(); if(typeof pushSync==='function') pushSync();
+      toast(`Removi ${remove.length} duplicado(s) (${fmt(soma)}).`);
     }
     return;
   }
