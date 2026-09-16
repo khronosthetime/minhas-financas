@@ -2530,14 +2530,14 @@ $('#app').addEventListener('click',e=>{
     return;
   }
   if(e.target.closest('#dedupBtn')){
-    // Cartao importado por 2 conexoes (XP + XP Investimentos): mesma compra em dobro.
-    // Agrupa por data|valor|nome; se ha 2+ FONTES diferentes, mantem 1 (a categorizada) e remove o resto.
-    const ofs=db.transactions.filter(t=>/^of_/.test(t.id));
-    const groups={};
-    ofs.forEach(t=>{ const k=t.date+'|'+t.amount+'|'+(t.note||'').trim().toUpperCase(); (groups[k]=groups[k]||[]).push(t); });
+    // O cartao XP e o mesmo em 2 conexoes (XP e XP Investimentos): cada compra entra 2x.
+    // Como e o mesmo cartao fisico, todo par com mesma DATA+VALOR e a mesma compra (mesmo com
+    // nome truncado diferente). Remove a copia "XP Investimentos" de cada par, preservando as
+    // parcelas futuras (que so existem na XP Investimentos) e repeticoes legitimas (por contagem).
+    const avail={}; // data|valor -> quantas na fonte XP
+    db.transactions.forEach(t=>{ if(t.fonte==='XP'){ const k=t.date+'|'+t.amount; avail[k]=(avail[k]||0)+1; } });
     const remove=[];
-    Object.values(groups).forEach(g=>{ if(g.length<2) return; if(new Set(g.map(t=>t.fonte||'')).size<2) return;
-      g.sort((a,b)=>(a.categoryId==='c_other'?1:0)-(b.categoryId==='c_other'?1:0)); for(let i=1;i<g.length;i++) remove.push(g[i]); });
+    db.transactions.forEach(t=>{ if(t.fonte==='XP Investimentos'){ const k=t.date+'|'+t.amount; if(avail[k]>0){ remove.push(t); avail[k]--; } } });
     if(!remove.length){ toast('Nenhum duplicado encontrado.'); return; }
     const soma=remove.reduce((s,t)=>s+t.amount,0);
     if(confirm(`Encontrei ${remove.length} lançamento(s) duplicado(s) somando ${fmt(soma)} (mesma compra importada por duas conexões). Remover as cópias extras? Mantém uma de cada.`)){
