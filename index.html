@@ -506,6 +506,7 @@ let curY=now.getFullYear(), curM=now.getMonth(); // 0-11
 let activeTab='inicio';
 let homeFilter=null; // categoria filtrada na tela Início (ou null)
 let cardFilter=null; // origem (cartão) filtrada na tela Início (ou null)
+let typeFilter=null; // 'income' | 'expense' | null — filtra a lista de lançamentos
 let patrFilter=null; // classe de ativo filtrada no Patrimônio (ou null)
 
 const $=s=>document.querySelector(s);
@@ -635,14 +636,15 @@ function renderInicio(){
 
   // Lançamentos (coluna direita)
   const fcat = homeFilter ? (catById(homeFilter)||{name:'Categoria'}) : null;
-  const shown = homeFilter ? list.filter(x=>x.categoryId===homeFilter) : list;
+  const shown = list.filter(x=>(!homeFilter||x.categoryId===homeFilter) && (!typeFilter||x.type===typeFilter));
   const shownTotal = shown.reduce((s,x)=>s+x.amount,0);
   html+=`<div class="board-col board-side"><div class="panel panel-tx">`;
   html+=`<div class="sec-title">${fcat?esc(fcat.name)+`<button id="clearFilter">Ver todos</button>`:'Lançamentos'}</div>`;
-  if(fcat) html+=`<div style="font-size:12.5px;color:var(--muted);margin:-6px 2px 12px">${shown.length} lançamento${shown.length===1?'':'s'} · ${fmt(shownTotal)}</div>`;
+  html+=`<div class="card-chips" style="margin-top:2px"><button class="cchip${!typeFilter?' on':''}" data-type="">Todos</button><button class="cchip${typeFilter==='income'?' on':''}" data-type="income">Entradas</button><button class="cchip${typeFilter==='expense'?' on':''}" data-type="expense">Saídas</button></div>`;
+  if(fcat||typeFilter) html+=`<div style="font-size:12.5px;color:var(--muted);margin:2px 2px 12px">${shown.length} lançamento${shown.length===1?'':'s'} · ${fmt(shownTotal)}</div>`;
   if(list.length>5) html+=`<input id="txSearch" class="tx-search" placeholder="Buscar lançamento" autocomplete="off">`;
   if(!shown.length){
-    html+=`<div class="empty">${homeFilter?'<b>Nada aqui neste mês</b>Sem lançamentos de '+esc(fcat.name)+'.':'<b>Nenhum lançamento ainda</b>Toque no botão + para registrar seu primeiro gasto ou receita deste mês.'}</div>`;
+    html+=`<div class="empty">${(homeFilter||typeFilter)?'<b>Nada com esse filtro</b>Sem lançamentos'+(typeFilter==='income'?' de entrada':typeFilter==='expense'?' de saída':'')+(fcat?' em '+esc(fcat.name):'')+' neste mês.':'<b>Nenhum lançamento ainda</b>Toque no botão + para registrar seu primeiro gasto ou receita deste mês.'}</div>`;
   }else{
     let lastDay='';
     shown.forEach(x=>{
@@ -2396,8 +2398,8 @@ function importPosicoes(file){
 }
 
 /* ---------- EVENTS ---------- */
-$('#prevM').addEventListener('click',()=>{ curM--; if(curM<0){curM=11;curY--;} homeFilter=null; cardFilter=null; renderAll(); });
-$('#nextM').addEventListener('click',()=>{ curM++; if(curM>11){curM=0;curY++;} homeFilter=null; cardFilter=null; renderAll(); });
+$('#prevM').addEventListener('click',()=>{ curM--; if(curM<0){curM=11;curY--;} homeFilter=null; cardFilter=null; typeFilter=null; renderAll(); });
+$('#nextM').addEventListener('click',()=>{ curM++; if(curM>11){curM=0;curY++;} homeFilter=null; cardFilter=null; typeFilter=null; renderAll(); });
 $('#fab').addEventListener('click',()=>txSheet(null));
 $('#addTop').addEventListener('click',()=>txSheet(null));
 // Atalhos de teclado (desktop): ← → muda o mês/ciclo, N novo lançamento, / busca. Ignora se estiver digitando, com sheet aberto ou app bloqueado.
@@ -2419,7 +2421,7 @@ $('#eyeToggle').addEventListener('click',()=>{ db.settings=db.settings||{}; db.s
 $('#app').addEventListener('input',e=>{ if(e.target.id==='txSearch') filterTx(e.target.value); });
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
-  activeTab=t.dataset.tab; homeFilter=null; cardFilter=null;
+  activeTab=t.dataset.tab; homeFilter=null; cardFilter=null; typeFilter=null;
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===t));
   document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.dataset.name===activeTab));
   renderAll();
@@ -2434,6 +2436,7 @@ $('#app').addEventListener('click',e=>{
   if(e.target.closest('#clearChat')){ if(confirm('Limpar a conversa? Os lançamentos que você já registrou continuam salvos.')){ db.chat=[]; save(); renderChat(); } return; }
   const cb=e.target.closest('[data-catbar]'); if(cb){ const cid=cb.dataset.catbar; homeFilter = homeFilter===cid?null:cid; renderInicio(); return; }
   const kc=e.target.closest('[data-card]'); if(kc){ cardFilter=kc.dataset.card||null; renderInicio(); return; }
+  const tc=e.target.closest('[data-type]'); if(tc){ typeFilter=tc.dataset.type||null; renderInicio(); return; }
   if(e.target.closest('#clearFilter')){ homeFilter=null; renderInicio(); return; }
   const tx=e.target.closest('[data-tx]'); if(tx){ const t=db.transactions.find(x=>x.id===tx.dataset.tx); if(t) txSheet(t); return; }
   const pb=e.target.closest('[data-paybill]'); if(pb){ toggleBillPaid(pb.dataset.paybill); return; }
