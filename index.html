@@ -683,7 +683,7 @@ function renderInicio(){
       const sign=x.type==='income'?'+':'−';
       html+=`<button class="tx" data-tx="${x.id}">
         <span class="ic" style="background:${c.color}">${initials(c.name)}</span>
-        <span class="mid"><div class="nm">${esc(x.note||c.name)}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(normFonte(x.fonte)):''}${x._sched?' · <span class="sched">agendada</span>':''}</div>${x.desc?`<div class="tx-desc" style="font-size:11px;color:var(--muted);opacity:.85;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46ch">${esc(x.desc)}</div>`:''}${x.tags&&x.tags.length?`<div class="tx-tags">${x.tags.map(tg=>`<span class="ttag">${esc(tg)}</span>`).join('')}</div>`:''}</span>
+        <span class="mid"><div class="nm">${esc(txName(x))}</div><div class="mt">${esc(c.name)}${x.fonte?' · '+esc(normFonte(x.fonte)):''}${x._sched?' · <span class="sched">agendada</span>':''}</div>${x.desc?`<div class="tx-desc" style="font-size:11px;color:var(--muted);opacity:.85;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46ch">${esc(x.desc)}</div>`:''}${x.tags&&x.tags.length?`<div class="tx-tags">${x.tags.map(tg=>`<span class="ttag">${esc(tg)}</span>`).join('')}</div>`:''}</span>
         <span class="amt ${x.type==='income'?'pos':'neg'} tnum">${sign} ${fmt(x.amount)}</span>
       </button>`;
     });
@@ -1531,7 +1531,7 @@ let cloudDirty=false, cloudBusy=false, cloudTimer=null, cloudLast='';
 function cloudCfg(){ db.settings=db.settings||{}; return db.settings; }
 function cloudOn(){ const s=cloudCfg(); return !!(s.cloudOn && (s.cloudUrl||s.pushServer) && s.cloudSecret && s.cloudAcct); }
 function cloudBase(){ const s=cloudCfg(); return (s.cloudUrl||s.pushServer||'').replace(/\/+$/,''); }
-function cloudDoc(){ const d={}; CLOUD_KEYS.forEach(k=>{ d[k]=db[k]; }); d.sherlock=(db.settings&&db.settings.catMemory)||{}; d.ofDeleted=Array.isArray(db.ofDeleted)?db.ofDeleted:[]; return d; }
+function cloudDoc(){ const d={}; CLOUD_KEYS.forEach(k=>{ d[k]=db[k]; }); d.sherlock=(db.settings&&db.settings.catMemory)||{}; d.alias=(db.settings&&db.settings.aliasMemory)||{}; d.ofDeleted=Array.isArray(db.ofDeleted)?db.ofDeleted:[]; return d; }
 // Ids do Open Finance (of_...) que o usuario REMOVEU ou DIVIDIU de proposito.
 // Vai pra nuvem e o /api/sync respeita (nao re-importa). Uniao monotonica: nunca perde.
 function markOfDeleted(id){ if(!id||!/^of_/.test(id)) return; db.ofDeleted=Array.isArray(db.ofDeleted)?db.ofDeleted:[]; if(!db.ofDeleted.includes(id)) db.ofDeleted.push(id); }
@@ -1541,6 +1541,7 @@ function cloudReplace(doc){ // servidor autoritativo (pull mais novo)
   if(!doc||typeof doc!=='object') return;
   CLOUD_KEYS.forEach(k=>{ if(doc[k]!==undefined) db[k]=doc[k]; });
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=doc.sherlock; }
+  if(doc.alias){ db.settings=db.settings||{}; db.settings.aliasMemory=doc.alias; }
   mergeOfDeleted(doc);
   dropOfDeleted();
   ensureCats();
@@ -1562,6 +1563,7 @@ function cloudUnion(doc){ // conflito: uniao por id pra nao perder o que foi adi
   if(doc.budgets) db.budgets=Object.assign({}, doc.budgets, db.budgets||{});
   if(doc.patrHist) db.patrHist=Object.assign({}, doc.patrHist, db.patrHist||{}); // histórico por ciclo: local vence no conflito
   if(doc.sherlock){ db.settings=db.settings||{}; db.settings.catMemory=Object.assign({}, doc.sherlock, db.settings.catMemory||{}); }
+  if(doc.alias){ db.settings=db.settings||{}; db.settings.aliasMemory=Object.assign({}, doc.alias, db.settings.aliasMemory||{}); }
   mergeOfDeleted(doc);
   dropOfDeleted();
   ensureCats();
@@ -1729,6 +1731,7 @@ function txSheet(existing){
   let type=ed?ed.type:'expense';
   let catId=ed?ed.categoryId:null;
   const prevCat=ed?ed.categoryId:null;
+  const origNote=ed?(ed.note||''):'';
   const html=`
     <div class="sh-head"><button id="shCancel">Cancelar</button><h2>${ed?'Editar':'Novo lançamento'}</h2><button id="shSave">Salvar</button></div>
     <div class="body">
@@ -1761,6 +1764,7 @@ function txSheet(existing){
         <div id="parcEHint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
       </div>` : ''}
       <div class="field"><label>Nome</label><input type="text" id="noteIn" placeholder="Ex: Mercado, Uber, Aluguel" value="${ed?esc(ed.note||''):''}" maxlength="60"></div>
+      ${ed?`<label style="display:flex;align-items:center;gap:9px;margin:-6px 2px 14px;font-size:13px;color:var(--muted);cursor:pointer"><input type="checkbox" id="aliasAll" style="width:18px;height:18px"> Usar esse nome pra todos desse estabelecimento</label>`:''}
       <div class="field"><label>Descritivo</label><textarea id="descIn" placeholder="Opcional. Ex: Apple Watch 207,07 + AirPods 198,94 + Marmita 739,00 + juros 130,34" maxlength="200" rows="2" style="width:100%;resize:vertical;font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-ui);padding:10px">${ed?esc(ed.desc||''):''}</textarea></div>
       <div class="field"><label>Etiquetas (separadas por vírgula)</label><input type="text" id="tagsIn" placeholder="ex: viagem, reembolsável" value="${ed&&ed.tags?esc(ed.tags.join(', ')):''}" maxlength="80"></div>
       ${ed?'<button class="btn ghost" id="splitBtn" style="margin-top:10px">Dividir em partes</button>':''}
@@ -1839,6 +1843,8 @@ function txSheet(existing){
     const note=sheetContent.querySelector('#noteIn').value.trim();
     const desc=(sheetContent.querySelector('#descIn').value||'').trim();
     const tags=sheetContent.querySelector('#tagsIn').value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,6);
+    const aliasAll=ed && sheetContent.querySelector('#aliasAll') && sheetContent.querySelector('#aliasAll').checked;
+    if(aliasAll) aliasLearn(origNote, note);
     const N=parcN();
     // Parcela: só em lançamento NOVO e despesa. Gera grupo _pg com as N parcelas.
     if(!ed && type==='expense' && N>1){
@@ -2100,6 +2106,12 @@ function catMem(){ db.settings=db.settings||{}; db.settings.catMemory=db.setting
 function isExpenseCat(id){ const c=catById(id); return !!(c&&c.type==='expense'); }
 function sherlockCat(desc){ const k=sherlockKey(desc); if(!k) return null; const id=catMem()[k]; return isExpenseCat(id)?id:null; }
 function sherlockLearn(desc,catId){ const k=sherlockKey(desc); if(!k||!isExpenseCat(catId)) return; catMem()[k]=catId; }
+// Apelidos: nome amigável por estabelecimento (ex: "MICROSOFT*SUBSCRIPTION" -> "Xbox Game Pass").
+// Vale na exibição (não reescreve o dado) e pega mês passado e futuros do mesmo lugar.
+function aliasMem(){ db.settings=db.settings||{}; db.settings.aliasMemory=db.settings.aliasMemory||{}; return db.settings.aliasMemory; }
+function aliasFor(desc){ const k=sherlockKey(desc); if(!k) return null; return aliasMem()[k]||null; }
+function aliasLearn(desc,name){ const k=sherlockKey(desc); if(!k||!name) return; if(name===(desc||'').trim()){ delete aliasMem()[k]; } else { aliasMem()[k]=name; } }
+function txName(x){ const c=catById(x.categoryId)||{name:'Sem categoria'}; return aliasFor(x.note)||x.note||c.name; }
 function appCatFor(desc){const s=sherlockCat(desc); if(s) return s; const id=MAP_TO_APP[catFatura(desc)]||'c_other'; return catById(id)?id:(db.categories.find(c=>c.type==='expense')||{}).id;}
 function parseValorCents(s){
   if(!s) return null;
