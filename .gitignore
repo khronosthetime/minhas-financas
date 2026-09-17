@@ -13,3 +13,6 @@ Thumbs.db
 
 # Faturas de teste sinteticas (nao versionar)
 test/
+
+# Notas técnicas com dados pessoais — NUNCA versionar
+NOTES.md
