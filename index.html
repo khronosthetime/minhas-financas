@@ -813,8 +813,9 @@ function renderContas(){
   const bills=db.bills.slice().sort((a,b)=>a.dueDay-b.dueDay);
   const outs=bills.filter(b=>(b.kind||'out')==='out');
   const ins=bills.filter(b=>b.kind==='in');
-  let due=0,paidOut=0; outs.forEach(b=>{ (b.paidMonths||[]).includes(ym)?paidOut+=b.amount:due+=b.amount; });
-  let toRecv=0; ins.forEach(b=>{ if(!(b.paidMonths||[]).includes(ym)) toRecv+=b.amount; });
+  // "Já pago" usa o REALIZADO (executado) de cada fixo pago; "a pagar" fica no esperado (ainda não saiu).
+  let due=0,paidOut=0; outs.forEach(b=>{ if((b.paidMonths||[]).includes(ym)){ const r=billRealized(b,ym); paidOut+=(r!=null?r:b.amount); } else due+=b.amount; });
+  let toRecv=0,recvd=0; ins.forEach(b=>{ if((b.paidMonths||[]).includes(ym)){ const r=billRealized(b,ym); recvd+=(r!=null?r:b.amount); } else toRecv+=b.amount; });
 
   let html=`<div class="board">`;
   html+=`<div class="kpirow">
