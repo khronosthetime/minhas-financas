@@ -537,7 +537,9 @@ function txInMonth(){const ym=ymOf(); return db.transactions.filter(t=>cycleKey(
 // Detecta por _sched OU por a nota pertencer a uma "família" que tem parcela futura agendada.
 function _baseNote(n){ return (n||'').replace(/\(\d+\/\d+\)/,'').replace(/\s+/g,' ').trim(); }
 function parcelaNotes(){ const s=new Set(); const td=localDate(now); db.transactions.forEach(t=>{ if(t.type==='expense' && (t._sched || t.date>td)) s.add(_baseNote(t.note)); }); return s; }
-function isParcela(t, set){ set=set||parcelaNotes(); return !!t._sched || set.has(_baseNote(t.note)); }
+// Parcela = SÓ compromisso parcelado real (marcado _sched pelo import/projeção). NÃO basta
+// ser data futura: aluguel/conta recorrente lançada adiantada não é parcela e deve contar.
+function isParcela(t){ return !!t._sched; }
 function cardsInCycle(){const ym=ymOf(); return [...new Set(db.transactions.filter(t=>cycleKey(t.date)===ym && t.fonte).map(t=>normFonte(t.fonte)))].sort();}
 
 function monthTotals(){
@@ -762,17 +764,42 @@ function billStatus(b){
   return 'open';
 }
 
+// Palavras-chave de um Fixo pra casar com o lançamento real (ex.: "Aluguel (Rebeca)" -> rebeca/aluguel).
+function billKeys(name){
+  const stop=new Set(['de','da','do','dos','das','metade','conta','mensal','mes','seguro','mae']);
+  return (name||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
+    .replace(/[()·.,]/g,' ').replace(/\d+/g,' ').split(/\s+/).filter(w=>w.length>=3 && !stop.has(w));
+}
+// Realizado do ciclo pra um Fixo: soma os lançamentos REAIS que casam (ignora o placeholder
+// que o próprio "marcar pago" cria, pra o realizado ser o executado de verdade). null = não lançado.
+function billRealized(b,ym){
+  const keys=billKeys(b.name); if(!keys.length) return null;
+  const want=b.kind==='in'?'income':'expense';
+  let sum=0, hit=false;
+  db.transactions.forEach(t=>{
+    if(t.type!==want || t._bill || cycleKey(t.date)!==ym) return;
+    const n=(t.note||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+    if(keys.some(k=>n.includes(k))){ sum+=t.amount; hit=true; }
+  });
+  return hit?sum:null;
+}
 function billRow(b,ym,kind){
   const st=billStatus(b);
   const isDone=st==='ok';
   const L={out:{ok:'Pago',late:'Vencida',open:'Em aberto'},in:{ok:'Recebido',late:'Atrasado',open:'A receber'}}[kind];
+  const real=billRealized(b,ym);
+  const diff=(real!=null)?(b.amount-real):null;
+  const realHtml = real==null
+    ? `<span style="opacity:.55">Realizado: não lançado</span>`
+    : `Realizado <b class="tnum">${fmt(real)}</b>${diff>0?` <span style="color:var(--pos)">· economia ${fmt(diff)}</span>`:diff<0?` <span style="color:var(--neg)">· +${fmt(-diff)}</span>`:` · em cheio`}`;
   return `<div class="bill ${isDone?'paid':''}">
     <button class="chk" data-paybill="${b.id}" aria-label="${kind==='in'?'Marcar como recebido':'Marcar como pago'}">${isDone?'✓':''}</button>
     <div class="mid">
       <div class="nm">${esc(b.name)}</div>
       <div class="mt"><span class="pill ${st}">${L[st]}</span> ${kind==='in'?'recebe':'vence'} dia ${b.dueDay}${b.recurring?' · mensal':''}</div>
+      <div class="mt">${realHtml}</div>
     </div>
-    <div style="text-align:right"><div class="amt tnum">${fmt(b.amount)}</div></div>
+    <div style="text-align:right"><div class="amt tnum">${fmt(b.amount)}</div><div class="mt" style="opacity:.6">esperado</div></div>
     <button class="edit" data-editbill="${b.id}" aria-label="Editar">✎</button>
   </div>`;
 }
