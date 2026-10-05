@@ -773,9 +773,13 @@ function billKeys(name){
 // Realizado do ciclo pra um Fixo: soma os lançamentos REAIS que casam (ignora o placeholder
 // que o próprio "marcar pago" cria, pra o realizado ser o executado de verdade). null = não lançado.
 function billRealized(b,ym){
+  let sum=0, hit=false;
+  // 1) vínculo direto: o lançamento do Fixo (editado pro valor executado) é o realizado
+  db.transactions.forEach(t=>{ if(t._bill===b.id && cycleKey(t.date)===ym){ sum+=t.amount; hit=true; } });
+  if(hit) return sum;
+  // 2) fallback: casa por palavra-chave com lançamento real avulso (sem placeholder)
   const keys=billKeys(b.name); if(!keys.length) return null;
   const want=b.kind==='in'?'income':'expense';
-  let sum=0, hit=false;
   db.transactions.forEach(t=>{
     if(t.type!==want || t._bill || cycleKey(t.date)!==ym) return;
     const n=(t.note||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
