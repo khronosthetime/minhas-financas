@@ -720,7 +720,7 @@ function renderOrcamento(){
     if(isParcela(x,_pset)){ parcByCat[x.categoryId]=(parcByCat[x.categoryId]||0)+x.amount;
       (parcListByCat[x.categoryId]=parcListByCat[x.categoryId]||[]).push({n:txName(x), a:x.amount}); }
   });
-  const withBudget=exp.filter(c=>db.budgets[c.id]>0);
+  const shown=exp.filter(c=>db.budgets[c.id]>0 || (spentByCat[c.id]||0)>0);
   let totalBud=0,totalSpent=0;
   Object.keys(db.budgets).forEach(k=>{ if(db.budgets[k]>0){ totalBud+=db.budgets[k]; totalSpent+=(spentByCat[k]||0);} });
 
@@ -734,29 +734,39 @@ function renderOrcamento(){
     </div>
   </div>`;
   html+=`<div class="panel"><div class="sec-title">Limites por categoria <button id="editBud">Editar</button></div>`;
-  if(!withBudget.length){
+  if(!shown.length){
     html+=`<div class="empty"><b>Sem limites definidos</b>Defina quanto pretende gastar em cada categoria e acompanhe o consumo ao longo do mês.</div>`;
   }else{
     html+=`<div class="buds">`;
-    withBudget.forEach(c=>{
-      const spent=spentByCat[c.id]||0, bud=db.budgets[c.id];
-      const pct=Math.min(100,Math.round(spent/bud*100));
-      const over=spent>bud;
-      const color=over?'var(--neg)':(pct>=85?'var(--warn)':c.color);
+    shown.forEach(c=>{
+      const spent=spentByCat[c.id]||0, bud=db.budgets[c.id]||0;
       const parc=parcByCat[c.id]||0;
       let parcHtml='';
       if(parc>0){
         const items=(parcListByCat[c.id]||[]).sort((a,b)=>b.a-a.a).map(p=>`${esc(p.n)} ${fmt(p.a)}`).join(' · ');
         parcHtml=`<div style="font-size:12px;opacity:.72;margin-top:6px;line-height:1.45">Parcelas: <b class="tnum">${fmt(parc)}</b> · ${items}</div>`;
       }
-      html+=`<div class="bud">
-        <div class="top">
-          <span class="nm"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span>
-          <span class="fig"><b class="tnum">${fmt(spent)}</b> / ${fmt(bud)}</span>
-        </div>
-        <div class="track"><i style="width:${Math.max(3,pct)}%;background:${color}"></i></div>
-        ${parcHtml}
-      </div>`;
+      if(bud>0){
+        const pct=Math.min(100,Math.round(spent/bud*100));
+        const over=spent>bud;
+        const color=over?'var(--neg)':(pct>=85?'var(--warn)':c.color);
+        html+=`<div class="bud">
+          <div class="top">
+            <span class="nm"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span>
+            <span class="fig"><b class="tnum">${fmt(spent)}</b> / ${fmt(bud)}</span>
+          </div>
+          <div class="track"><i style="width:${Math.max(3,pct)}%;background:${color}"></i></div>
+          ${parcHtml}
+        </div>`;
+      }else{
+        html+=`<div class="bud">
+          <div class="top">
+            <span class="nm"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span>
+            <span class="fig"><b class="tnum">${fmt(spent)}</b> <span style="opacity:.55">sem meta</span></span>
+          </div>
+          ${parcHtml}
+        </div>`;
+      }
     });
     html+=`</div>`;
   }
