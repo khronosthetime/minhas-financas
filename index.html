@@ -714,11 +714,16 @@ function renderOrcamento(){
   const exp=db.categories.filter(c=>c.type==='expense');
   // Parcela CONTA no custo de vida (decisão Gabriel 08/10). Além do gasto total por categoria,
   // guarda quanto de cada categoria é parcela + a lista, pra mostrar o comprometimento.
+  const _MES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  const mesAno=d=>{const p=(d||'').split('-'); return p[1]?_MES[(+p[1])-1]+'/'+p[0].slice(2):'?';};
+  // última parcela de cada família (maior data) -> pra mostrar quando acaba
+  const endByNote={};
+  db.transactions.forEach(t=>{ if(t.type==='expense' && isParcela(t)){ const b=_baseNote(t.note); if(!endByNote[b]||t.date>endByNote[b]) endByNote[b]=t.date; } });
   const spentByCat={}, parcByCat={}, parcListByCat={}; const _pset=parcelaNotes();
   txInMonth().forEach(x=>{ if(x.type!=='expense') return;
     spentByCat[x.categoryId]=(spentByCat[x.categoryId]||0)+x.amount;
     if(isParcela(x,_pset)){ parcByCat[x.categoryId]=(parcByCat[x.categoryId]||0)+x.amount;
-      (parcListByCat[x.categoryId]=parcListByCat[x.categoryId]||[]).push({n:txName(x), a:x.amount}); }
+      (parcListByCat[x.categoryId]=parcListByCat[x.categoryId]||[]).push({n:txName(x), a:x.amount, end:endByNote[_baseNote(x.note)]}); }
   });
   const shown=exp.filter(c=>db.budgets[c.id]>0 || (spentByCat[c.id]||0)>0);
   let totalBud=0,totalSpent=0;
@@ -743,7 +748,7 @@ function renderOrcamento(){
       const parc=parcByCat[c.id]||0;
       let parcHtml='';
       if(parc>0){
-        const items=(parcListByCat[c.id]||[]).sort((a,b)=>b.a-a.a).map(p=>`${esc(p.n)} ${fmt(p.a)}`).join(' · ');
+        const items=(parcListByCat[c.id]||[]).sort((a,b)=>b.a-a.a).map(p=>{ const last=p.end&&cycleKey(p.end)===ymOf(); return `${esc(p.n)} ${fmt(p.a)} <span style="opacity:.6">${last?'· última!':'· até '+mesAno(p.end)}</span>`; }).join(' &nbsp; ');
         parcHtml=`<div style="font-size:12px;opacity:.72;margin-top:6px;line-height:1.45">Parcelas: <b class="tnum">${fmt(parc)}</b> · ${items}</div>`;
       }
       if(bud>0){
